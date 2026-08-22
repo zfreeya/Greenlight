@@ -45,6 +45,7 @@ const SYSTEM_PROMPT = [
   "6. 回复使用 Markdown 排版：要点用列表、重点加粗、代码与命令输出用代码块，让回答清晰易读。",
   "7. 你创建的 .html 网页/游戏会自动出现在右侧预览面板（harness.local）并自动打开，完成后提示「已在右侧预览打开」；不要建议用户双击文件或手动起服务器。",
   "8. 本机已安装 Godot 运行时。用户要求做游戏（2D/3D）时，优先用 Godot 工具链：先 detect_godot_runtime 确认，再 create_godot_project 创建项目、run_godot_project 运行。只有 detect 明确返回未找到时才可降级为网页 Canvas，并在回复里说明原因。",
+  "9. 严禁用 bash 全盘搜索（如 find / -name godot*、which/whereis 遍历 PATH）来定位或检测 Godot 运行时；运行时检测一律用 detect_godot_runtime 结构化工具。",
 ].join("\n");
 
 /* ================= 工具定义（对齐 deepseek-harness 关键工具） ================= */
@@ -277,11 +278,11 @@ export function useHarness() {
   }, []);
 
   /* ---- 消息 → LLM 历史 ---- */
-  const toLlmMessages = (t: Thread, recallCtx: string) => {
+  const toLlmMessages = (t: Thread, recallCtx: string, godotCtx?: string) => {
     const out: { role: string; content: string }[] = [];
     let sys = SYSTEM_PROMPT;
     if (t.kind === "godot" || t.kind === "import_godot") {
-      sys += "\n\n【当前任务类型：Godot 游戏】Godot 引擎已就绪。请直接使用 Godot 工具（create_godot_project 创建项目、run_godot_project 运行游戏），不要改用网页 Canvas 或 HTML。";
+      sys += "\n\n【当前任务类型：Godot 游戏】" + (godotCtx || "请先用 detect_godot_runtime 确认引擎状态。");
     }
     if (recallCtx) {
       out.push({ role: "system", content: sys + "\n\n以下是记忆系统召回的用户画像与长期偏好，请在澄清与计划中主动遵守：\n" + recallCtx });
@@ -456,13 +457,26 @@ export function useHarness() {
       }
     }
 
+    /* Godot 任务：注入真实引擎状态（就绪+版本+路径），避免 Agent 用 bash 全盘搜索 */
+    let godotCtx = "";
+    if (snapshot.kind === "godot" || snapshot.kind === "import_godot") {
+      try {
+        const h = await fetch(godotCfg.url + "/health").then((r) => r.json()).catch(() => null);
+        if (h && h.engineStatus === "ready" && h.runtime?.version) {
+          godotCtx = "Godot 引擎已就绪（" + h.runtime.version + "，路径 " + h.runtime.path + "）。请直接用 create_godot_project 创建项目、run_godot_project 运行游戏；不要用 bash 搜索或重新检测运行时。";
+        } else {
+          godotCtx = "Godot 引擎当前不可用（" + (h?.engineStatus ?? "unknown") + "）。请用 detect_godot_runtime 确认；若确实未安装，说明原因并改用网页 Canvas。";
+        }
+      } catch { godotCtx = "Godot 服务不可达，请先用 detect_godot_runtime 检测。"; }
+    }
+
     const execMode = modeRef.current;
     const execTools = execMode === "plan-only" ? [] : buildTools();
     if (execMode === "plan-only") {
       snapshot.msgs.unshift({ id: -1, role: "agent", kind: "text", text: "（当前模式：仅制定计划，不执行工具。请只输出计划/方案，明确步骤与预期结果。）" });
     }
     const messages: { role: string; content: string; tool_calls?: LlmToolCall[]; tool_call_id?: string }[] =
-      toLlmMessages(snapshot, recallCtx);
+      toLlmMessages(snapshot, recallCtx, godotCtx);
     const prevDeliverableCount = snapshot.deliverables.length;
     let finalContent = "";
     let finalError = "";
