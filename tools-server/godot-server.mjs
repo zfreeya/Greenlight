@@ -67,6 +67,16 @@ async function detectRuntime() {
 function loadSelection() { try { return JSON.parse(fs.readFileSync(RUNTIME_STORE, "utf8")); } catch { return null; } }
 function saveSelection(sel) { fs.writeFileSync(RUNTIME_STORE, JSON.stringify(sel, null, 2)); return sel; }
 
+let cachedRuntime = null;
+async function resolveRuntime() {
+  if (cachedRuntime && fs.existsSync(cachedRuntime.path)) return cachedRuntime;
+  const sel = loadSelection();
+  if (sel && fs.existsSync(sel.path)) { cachedRuntime = sel; return sel; }
+  const det = await detectRuntime();
+  cachedRuntime = det.runtime;
+  return det.runtime;
+}
+
 function projectDir(projectId) { return path.join(PROJ_ROOT, String(projectId)); }
 
 function readProject(projectId) {
@@ -121,11 +131,10 @@ function logLine(projectId, stream, text) {
   if (p.logs.length > 500) p.logs = p.logs.slice(-500);
 }
 
-function startGodot(projectId, taskId, scene) {
+async function startGodot(projectId, taskId, scene) {
   const dir = projectDir(projectId);
   if (!fs.existsSync(path.join(dir, "project.godot"))) return { ok: false, code: "missing_project_file" };
-  const sel = loadSelection();
-  const det = sel && fs.existsSync(sel.path) ? sel : null;
+  const det = await resolveRuntime();
   if (!det) return { ok: false, code: "runtime_missing", hint: "未找到 Godot 运行时。请在 Harness 中检测或手动选择 Godot 可执行文件。" };
   if (processes.get(projectId)?.status === "running") return { ok: false, code: "already_running" };
   const args = ["--path", dir];
@@ -137,9 +146,9 @@ function startGodot(projectId, taskId, scene) {
   child.stderr.on("data", (d) => logLine(projectId, "err", d.toString()));
   child.on("error", (e) => { rec.status = "crashed"; rec.logs.push({ stream: "err", t: Date.now(), text: String(e) }); });
   child.on("close", (code, signal) => {
-    rec.status = code === 0 ? "stopped" : "crashed";
+    rec.status = rec.userStopped || code === 0 ? "stopped" : "crashed";
     rec.exit = { code, signal };
-    if (code !== 0) rec.logs.push({ stream: "err", t: Date.now(), text: "进程退出码 " + code + (signal ? " signal " + signal : "") });
+    if (!rec.userStopped && code !== 0) rec.logs.push({ stream: "err", t: Date.now(), text: "进程退出码 " + code + (signal ? " signal " + signal : "") });
   });
   return { ok: true, pid: child.pid, scene: scene || "（默认主场景）" };
 }
@@ -147,6 +156,7 @@ function startGodot(projectId, taskId, scene) {
 function stopGodot(projectId) {
   const rec = processes.get(projectId);
   if (!rec || rec.status !== "running") return { ok: true, code: "not_running" };
+  rec.userStopped = true;
   try { process.kill(-rec.child.pid, "SIGTERM"); } catch { try { rec.child.kill("SIGTERM"); } catch {} }
   setTimeout(() => { if (rec.status === "running") { try { process.kill(-rec.child.pid, "SIGKILL"); } catch {} } }, 2000);
   return { ok: true };
@@ -259,8 +269,8 @@ const routes = {
     else {
       if (!r.mainScene) issues.push({ code: "missing_main_scene", level: "error", msg: "未设置主场景（run/main_scene）" });
       else if (!fs.existsSync(path.join(r.dir, r.mainScene.replace("res://", "")))) issues.push({ code: "main_scene_not_found", level: "error", msg: "主场景文件不存在：" + r.mainScene });
-      const sel = loadSelection();
-      if (!sel || !fs.existsSync(sel.path)) issues.push({ code: "runtime_missing", level: "error", msg: "未检测到 Godot 运行时（不影响项目文件，但无法运行）" });
+      const sel = await resolveRuntime();
+      if (!sel) issues.push({ code: "runtime_missing", level: "error", msg: "未检测到 Godot 运行时（不影响项目文件，但无法运行）" });
     }
     return { ok: true, projectId: String(b.projectId || "p1"), valid: issues.filter((i) => i.code !== "runtime_missing").length === 0, issues };
   },
@@ -270,12 +280,12 @@ const routes = {
   "/status": async (b) => {
     const pid = String(b.projectId || "p1");
     const rec = processes.get(pid);
-    const sel = loadSelection();
-    return { game: rec?.status ?? "stopped", pid: rec?.child?.pid ?? null, scene: rec?.scene ?? null, startedAt: rec?.startedAt ?? null, runtime: sel && fs.existsSync(sel.path) ? sel : null, logs: (rec?.logs ?? []).slice(-40).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
+    const sel = await resolveRuntime();
+    return { game: rec?.status ?? "stopped", pid: rec?.child?.pid ?? null, scene: rec?.scene ?? null, startedAt: rec?.startedAt ?? null, runtime: sel, logs: (rec?.logs ?? []).slice(-40).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
   },
   "/export-web": async (b) => {
-    const sel = loadSelection();
-    if (!sel || !fs.existsSync(sel.path)) return { ok: false, code: "runtime_missing", hint: "需要 Godot 运行时才能导出 Web。" };
+    const sel = await resolveRuntime();
+    if (!sel) return { ok: false, code: "runtime_missing", hint: "需要 Godot 运行时才能导出 Web。" };
     const v = sel.major + "." + sel.minor + (sel.patch ? "." + sel.patch : "");
     const base = process.platform === "win32" ? path.join(os.homedir(), "AppData", "Roaming", "Godot", "export_templates", v) : path.join(os.homedir(), ".local", "share", "godot", "export_templates", v);
     const hasWeb = fs.existsSync(path.join(base, "web_dlink_debug.zip")) || fs.existsSync(path.join(base, "web_debug.zip"));
@@ -284,7 +294,7 @@ const routes = {
   },
   "/diagnostics": async (b) => {
     const pid = String(b.projectId || "p1");
-    return { project: readProject(pid), runtime: (() => { const s = loadSelection(); return s && fs.existsSync(s.path) ? s : null; })(), game: processes.get(pid)?.status ?? "stopped", logs: (processes.get(pid)?.logs ?? []).slice(-60).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
+    return { project: readProject(pid), runtime: (await resolveRuntime()), game: processes.get(pid)?.status ?? "stopped", logs: (processes.get(pid)?.logs ?? []).slice(-60).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
   },
   "/capture": async () => ({ ok: false, code: "unsupported_native", hint: "原生运行模式不支持截图；Web 预览模式可直接查看当前画面。" }),
 };
@@ -293,7 +303,7 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST,GET,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }); res.end(); return; }
   if (req.method === "GET" && req.url === "/health") {
     const sel = loadSelection();
-    return json(res, 200, { status: "ok", workspace: WORKSPACE, runtime: sel && fs.existsSync(sel.path) ? sel : null, engineStatus: sel && fs.existsSync(sel.path) ? "ready" : "unavailable", active: [...processes.keys()].filter((k) => processes.get(k)?.status === "running") });
+    return json(res, 200, { status: "ok", workspace: WORKSPACE, runtime: (await resolveRuntime()), engineStatus: (await resolveRuntime()) ? "ready" : "unavailable", active: [...processes.keys()].filter((k) => processes.get(k)?.status === "running") });
   }
   if (req.method === "POST" && routes[req.url]) {
     let raw = "";

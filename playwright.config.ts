@@ -27,8 +27,8 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "node tools-server/godot-server.mjs --workspace ./workspace --port 8455",
-      url: "http://127.0.0.1:8455/health",
+      command: "node tools-server/godot-server.mjs --workspace ./workspace --port 8456",
+      url: "http://127.0.0.1:8456/health",
       reuseExistingServer: true,
       timeout: 30_000,
     },

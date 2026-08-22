@@ -19,7 +19,8 @@ DeepSeek Harness 桌面端 - 对话式 Agent 工作台（Tauri 2 + React + TypeS
   （真实生成 project.godot / 场景 / GDScript，解析场景节点树）；受控子进程运行/停止/重启（退出码分类、日志捕获）；
   结构化 Godot 工具（detect/select/create/inspect/run/stop/restart/validate/export/diagnostics…）；独立状态模型
   （engineStatus/gameStatus/projectStatus）；游戏工作区（游戏/场景/控制台）；任务类型（普通/网页/Godot 游戏/导入）。
-  **限制**：本机未安装 Godot，故「实际渲染/导出」诚实报告「运行时缺失」；下载安装通道留接口，不伪造。
+  **已安装**：Godot 4.7.2（/Applications/Godot.app，经国内镜像安装）；真实运行/停止/日志/退出分类已端到端验证。
+  **限制**：Web 导出模板未安装（Web 内嵌试玩仍报「模板缺失」）；运行时下载/自动更新通道留接口（当前用 Homebrew cask / 镜像直下）。
 - **状态一致性与上下文隔离（四源状态模型）**：taskStatus / agentStatus / previewStatus / artifactStatus 独立驱动，
   界面任何区域的状态都来自对应状态源（顶栏任务状态、Agent 状态、成果卡预览状态、生成状态互不矛盾）；
   停止 Agent 不影响预览服务；成果卡按 正常/预览停止/内容过期/生成失败 分别呈现，主操作按状态唯一（确认完成/重新启动预览/重新加载/重试生成）；

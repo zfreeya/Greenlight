@@ -11,20 +11,21 @@ test.describe("Godot 游戏能力", () => {
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      try { localStorage.setItem("harness.tools.config", JSON.stringify({ url: "http://127.0.0.1:8451" })); } catch { /* ignore */ }
+      try { localStorage.setItem("harness.tools.config", JSON.stringify({ url: "http://127.0.0.1:8451" }));
+      localStorage.setItem("harness.godot.config", JSON.stringify({ url: "http://127.0.0.1:8456" })); } catch { /* ignore */ }
     });
   });
 
-  test("新建 Godot 任务 → 工作区诚实显示引擎未安装", async ({ page }) => {
+  test("新建 Godot 任务 → 工作区显示引擎就绪（已安装 Godot）", async ({ page }) => {
     await page.goto("/");
     await page.locator(".btn-new-chat").click();
     await expect(page.locator(".newtask-pop")).toBeVisible();
     await page.locator(".newtask-item", { hasText: "Godot 游戏" }).click();
     await page.locator(".win-titlebar .head-btn").first().click();
     await expect(page.locator(".game-workspace")).toBeVisible();
-    await expect(page.locator(".gw-head .badge")).toHaveText("引擎未安装");
-    await expect(page.locator(".gw-engine")).toContainText("未检测到");
-    await expect(page.locator(".gw-engine .gw-hint")).toContainText("未安装 Godot");
+    // 引擎就绪（真实检测到 /Applications/Godot.app）
+    await expect(page.locator(".gw-head .badge")).toHaveText("引擎就绪", { timeout: 30_000 });
+    await expect(page.locator(".gw-engine")).toContainText("4.7.2", { timeout: 30_000 });
   });
 
   test("godot-server 真实创建项目，工作区场景树真实解析展示", async ({ page, request }) => {
@@ -35,12 +36,12 @@ test.describe("Godot 游戏能力", () => {
     // 读取当前任务 id（与工作区 projectId 一致）
     const tid = await page.evaluate(() => localStorage.getItem("harness.current.v1"));
     // 用 godot-server 真实创建项目（projectId 与当前任务一致）
-    const c = await request.post("http://127.0.0.1:8455/create", { data: { projectId: tid, name: "platformer" } });
+    const c = await request.post("http://127.0.0.1:8456/create", { data: { projectId: tid, name: "platformer" } });
     expect(c.ok()).toBeTruthy();
     const cj = await c.json();
     expect(cj.ok).toBe(true);
     // 真实文件落盘
-    const sc = await request.post("http://127.0.0.1:8455/scenes", { data: { projectId: tid } });
+    const sc = await request.post("http://127.0.0.1:8456/scenes", { data: { projectId: tid } });
     const scj = await sc.json();
     expect(scj.scenes).toContain("scenes/main.tscn");
     expect(scj.tree.map((n: { type: string }) => n.type)).toContain("CharacterBody2D");
@@ -53,13 +54,25 @@ test.describe("Godot 游戏能力", () => {
     await expect(page.locator(".gw-scene")).toContainText("scenes/main.tscn");
   });
 
-  test("运行项目真实报告运行时缺失并给出下一步", async ({ request }) => {
-    const c = await request.post("http://127.0.0.1:8455/create", { data: { projectId: "runner-1", name: "runner" } });
+  test("真实运行与停止 Godot 游戏（真实进程 + 日志捕获）", async ({ request }) => {
+    const c = await request.post("http://127.0.0.1:8456/create", { data: { projectId: "runner-1", name: "runner" } });
     await c.json();
-    const r = await request.post("http://127.0.0.1:8455/run", { data: { projectId: "runner-1", taskId: "runner-1" } });
+    // 真实运行：spawn Godot 进程
+    const r = await request.post("http://127.0.0.1:8456/run", { data: { projectId: "runner-1", taskId: "runner-1" } });
     const rj = await r.json();
-    expect(rj.ok).toBe(false);
-    expect(rj.code).toBe("runtime_missing");
-    expect(rj.hint).toContain("Godot 运行时");
+    expect(rj.ok).toBe(true);
+    expect(rj.pid).toBeTruthy();
+    // 状态：running + 捕获日志
+    await new Promise((res) => setTimeout(res, 2500));
+    const st = await request.post("http://127.0.0.1:8456/status", { data: { projectId: "runner-1" } });
+    const stj = await st.json();
+    expect(stj.game).toBe("running");
+    expect(stj.logs.some((l: { text: string }) => /Godot Engine/.test(l.text))).toBe(true);
+    // 停止：真实终止进程
+    const sp = await request.post("http://127.0.0.1:8456/stop", { data: { projectId: "runner-1" } });
+    expect((await sp.json()).ok).toBe(true);
+    await new Promise((res) => setTimeout(res, 1500));
+    const st2 = await request.post("http://127.0.0.1:8456/status", { data: { projectId: "runner-1" } });
+    expect((await st2.json()).game).toBe("stopped");
   });
 });
