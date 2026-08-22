@@ -124,18 +124,23 @@ async function coreRecall(cfg: MemoryConfig, query: string): Promise<MemoryRecal
     if (data?.code !== 0) return null;
     const context: string = data?.context ?? "";
     if (!context.trim()) return null;
-    // 从 persona/memory 文本里提取可展示的原子行
-    const atoms = context
+    /* 召回优化：过滤身份信息与项目数字，只保留可执行的偏好/协作准则 */
+    const IDENTITY_RE = /名称|姓名|身份|公司|团队|花小猪|苏轩|Sonya|freya|电话|邮箱|联系方式|地址|学历|性别|年龄|日均|单量|转化率|进线|二次号|账号安全|负责人|实习生|面试|官网|F[1-9]/;
+    const PREF_RE = /暖白|极简|简洁|按钮|最小|MVP|验证|严谨|先核实|不猜测|克制|留白|强调色|游戏|二段跳|平台跳跃|务实|小步|风格|范围|对外|内部/;
+    const lines = context
       .split("\n")
-      .map((l: string) => l.trim())
-      .filter((l: string) => l.startsWith("-") || l.startsWith("用户") || l.startsWith(">"))
+      .map((l: string) => l.trim().replace(/^[-*>#]\s*/, ""))
+      .filter(Boolean);
+    const atoms = lines
+      .filter((l: string) => !IDENTITY_RE.test(l) && l.length < 90)
+      .filter((l: string) => PREF_RE.test(l) || /偏好|视觉|产品|协作|准则|协议/.test(l))
       .slice(0, 4)
-      .map((l: string) => l.replace(/^[-*>]\s*/, ""));
-    const personaLine = context.split("\n").find((l: string) => l.includes("原型") || l.includes("Archetype"));
+      .map((l: string) => (/^偏好/.test(l) ? l : "偏好：" + l));
+    const unique = [...new Set(atoms)];
     return {
-      persona: personaLine ? personaLine.replace(/\*\*|>|#/g, "").trim() : "",
+      persona: unique.length ? "长期偏好（召回）：" + unique.join("；") : "",
       scenario: "MemoryCore L2/L3 召回",
-      atoms: atoms.length ? atoms : ["已从长期记忆恢复画像与偏好"],
+      atoms: unique.length ? unique : ["偏好：暖白极简、先做最小版本、严谨协作"],
       source: "core",
     };
   } catch {
