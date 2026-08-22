@@ -343,9 +343,21 @@ export function useHarness() {
   const execTool = async (name: string, args: Record<string, unknown>, threadId: string): Promise<{ text: string; failed: boolean }> => {
     const godotNames = ["detect_godot_runtime","select_godot_runtime","create_godot_project","inspect_godot_project","list_godot_scenes","inspect_godot_scene","validate_godot_project","import_godot_assets","run_godot_project","run_godot_scene","stop_godot_game","restart_godot_game","export_godot_web","export_godot_build","collect_godot_diagnostics","open_godot_artifact","capture_game_preview"];
     if (godotNames.includes(name)) {
-      const ep = name.replace(/^godot_/, "");
-      const epMap: Record<string, string> = { detect_runtime: "/detect", select_runtime: "/select", create_project: "/create", inspect_project: "/inspect", list_scenes: "/scenes", inspect_scene: "/scenes", validate_project: "/validate", import_assets: "/import", run_project: "/run", run_scene: "/run", stop_game: "/stop", restart_game: "/restart", export_web: "/export-web", export_build: "/export-web", collect_diagnostics: "/diagnostics", open_artifact: "/status", capture_preview: "/capture" };
-      const p = epMap[ep] ?? ("/" + ep.replace(/_/g, "-"));
+      const epMap: Record<string, string> = {
+        detect_godot_runtime: "/detect", select_godot_runtime: "/select", create_godot_project: "/create",
+        inspect_godot_project: "/inspect", list_godot_scenes: "/scenes", inspect_godot_scene: "/scenes",
+        validate_godot_project: "/validate", import_godot_assets: "/import", run_godot_project: "/run",
+        run_godot_scene: "/run", stop_godot_game: "/stop", restart_godot_game: "/restart",
+        export_godot_web: "/export-web", export_godot_build: "/export-web", collect_godot_diagnostics: "/diagnostics",
+        open_godot_artifact: "/status", capture_game_preview: "/capture",
+      };
+      const p = epMap[name];
+      if (!p) {
+        const text = JSON.stringify({ ok: false, code: "unknown_tool", error: "未知 Godot 工具：" + name });
+        toolEvents.current.push({ name, args, result: text, status: "error" });
+        (window as unknown as Record<string, unknown>).__toolEvents = toolEvents.current.slice();
+        return { text, failed: true };
+      }
       try {
         const res = await fetch(godotCfg.url + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...args, projectId: String(args.projectId || threadId), taskId: threadId }), signal: AbortSignal.timeout(60000) });
         const data = await res.json();

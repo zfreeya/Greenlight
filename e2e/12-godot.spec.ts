@@ -54,6 +54,24 @@ test.describe("Godot 游戏能力", () => {
     await expect(page.locator(".gw-scene")).toContainText("scenes/main.tscn");
   });
 
+  test("前端 Agent 工具路径：create/inspect 端点映射正确（不落未知端点）", async ({ page, request }) => {
+    await page.goto("/");
+    await page.locator(".btn-new-chat").click();
+    await page.locator(".newtask-item", { hasText: "Godot 游戏" }).click();
+    await page.locator("#chatInput").click();
+    await page.locator("#chatInput").type("请调用 create_godot_project 工具（name 用 map-demo），不要用 bash。");
+    await page.locator(".send-btn").click();
+    // 工具摘要必须为「已创建 Godot 项目」，而不是「已运行命令」（映射正确才走 godot 工具）
+    await expect(page.locator(".tool-group")).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator(".tool-summary")).toContainText(/已创建 Godot 项目/);
+    // 通过 godot-server 确认项目真实创建（前端映射把 projectId 传对了）
+    const tid = await page.evaluate(() => localStorage.getItem("harness.current.v1"));
+    const insp = await request.post("http://127.0.0.1:8456/inspect", { data: { projectId: tid } });
+    const inj = await insp.json();
+    expect(inj.ok).toBe(true);
+    expect(inj.scenes).toContain("scenes/main.tscn");
+  });
+
   test("真实运行与停止 Godot 游戏（真实进程 + 日志捕获）", async ({ request }) => {
     const c = await request.post("http://127.0.0.1:8456/create", { data: { projectId: "runner-1", name: "runner" } });
     await c.json();
