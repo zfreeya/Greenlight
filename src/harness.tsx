@@ -44,6 +44,7 @@ const SYSTEM_PROMPT = [
   "5. 中文回复，简洁具体，引用真实输出，不要寒暄客套。",
   "6. 回复使用 Markdown 排版：要点用列表、重点加粗、代码与命令输出用代码块，让回答清晰易读。",
   "7. 你创建的 .html 网页/游戏会自动出现在右侧预览面板（harness.local）并自动打开，完成后提示「已在右侧预览打开」；不要建议用户双击文件或手动起服务器。",
+  "8. 本机已安装 Godot 运行时。用户要求做游戏（2D/3D）时，优先用 Godot 工具链：先 detect_godot_runtime 确认，再 create_godot_project 创建项目、run_godot_project 运行。只有 detect 明确返回未找到时才可降级为网页 Canvas，并在回复里说明原因。",
 ].join("\n");
 
 /* ================= 工具定义（对齐 deepseek-harness 关键工具） ================= */
@@ -278,10 +279,14 @@ export function useHarness() {
   /* ---- 消息 → LLM 历史 ---- */
   const toLlmMessages = (t: Thread, recallCtx: string) => {
     const out: { role: string; content: string }[] = [];
+    let sys = SYSTEM_PROMPT;
+    if (t.kind === "godot" || t.kind === "import_godot") {
+      sys += "\n\n【当前任务类型：Godot 游戏】Godot 引擎已就绪。请直接使用 Godot 工具（create_godot_project 创建项目、run_godot_project 运行游戏），不要改用网页 Canvas 或 HTML。";
+    }
     if (recallCtx) {
-      out.push({ role: "system", content: SYSTEM_PROMPT + "\n\n以下是记忆系统召回的用户画像与长期偏好，请在澄清与计划中主动遵守：\n" + recallCtx });
+      out.push({ role: "system", content: sys + "\n\n以下是记忆系统召回的用户画像与长期偏好，请在澄清与计划中主动遵守：\n" + recallCtx });
     } else {
-      out.push({ role: "system", content: SYSTEM_PROMPT });
+      out.push({ role: "system", content: sys });
     }
     for (const m of t.msgs) {
       if (m.kind === "recall" || m.kind === "tool") continue;
