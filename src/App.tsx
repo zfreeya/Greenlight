@@ -249,6 +249,9 @@ function toolLineSummary(g: Msg): string {
   if (name === "grep") { try { const n = JSON.parse(g.toolResult || "{}").matches?.length ?? 0; return "已搜索 " + n + " 个匹配"; } catch { return "已搜索内容"; } }
   if (name === "fetch") return "已抓取 " + String(args.url || "").slice(0, 40);
   if (name === "todo_write") return "已更新任务清单";
+  if (name === "read_godot_script") return "已读取脚本 " + String(args.path || "");
+  if (name === "write_godot_script") return "已写入脚本 " + String(args.path || "");
+  if (name === "edit_godot_script") return "已修改脚本 " + String(args.path || "");
   if (name === "detect_godot_runtime") return (g.toolResult && /"found":true/.test(g.toolResult)) ? "已识别 Godot 运行时" : "未检测到 Godot 运行时";
   if (name === "select_godot_runtime") return (g.toolResult && /"ok":true/.test(g.toolResult)) ? "已选择 Godot 运行时" : "Godot 运行时选择失败";
   if (name === "create_godot_project") return "已创建 Godot 项目";

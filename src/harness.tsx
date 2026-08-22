@@ -46,6 +46,7 @@ const SYSTEM_PROMPT = [
   "7. 你创建的 .html 网页/游戏会自动出现在右侧预览面板（harness.local）并自动打开，完成后提示「已在右侧预览打开」；不要建议用户双击文件或手动起服务器。",
   "8. 本机已安装 Godot 运行时。用户要求做游戏（2D/3D）时，优先用 Godot 工具链：先 detect_godot_runtime 确认，再 create_godot_project 创建项目、run_godot_project 运行。只有 detect 明确返回未找到时才可降级为网页 Canvas，并在回复里说明原因。",
   "9. 严禁用 bash 全盘搜索（如 find / -name godot*、which/whereis 遍历 PATH）来定位或检测 Godot 运行时；运行时检测一律用 detect_godot_runtime 结构化工具。",
+  "10. 复杂游戏按分层推进：先做一个能玩的最小核心，再逐轮加系统（每轮可试玩）。项目文件用 read_godot_script / write_godot_script / edit_godot_script 读写（相对项目目录），不用 bash cat/sed。运行游戏后用 collect_godot_diagnostics 读取结构化错误（含文件与行号），定位后 edit_godot_script 修复，再 restart_godot_game。一次只改一个系统，改完即验证。",
 ].join("\n");
 
 /* ================= 工具定义（对齐 deepseek-harness 关键工具） ================= */
@@ -73,6 +74,9 @@ function buildTools() {
     { type: "function", function: { name: "collect_godot_diagnostics", description: "收集 Godot 项目与运行诊断（日志/运行时/项目状态）。", parameters: { type: "object", properties: {} } } },
     { type: "function", function: { name: "export_godot_web", description: "导出 Web 版本（需要 Godot 运行时与 Web 导出模板）。", parameters: { type: "object", properties: {} } } },
     { type: "function", function: { name: "capture_game_preview", description: "获取游戏预览截图或预览地址。", parameters: { type: "object", properties: {} } } },
+    { type: "function", function: { name: "read_godot_script", description: "读取 Godot 项目内文件（相对项目目录，带行号）。", parameters: { type: "object", properties: { path: str("相对项目目录的路径，如 scripts/main.gd") }, required: ["path"] } } },
+    { type: "function", function: { name: "write_godot_script", description: "创建或整体覆盖 Godot 项目内文件。", parameters: { type: "object", properties: { path: str("相对项目目录的路径"), content: str("完整内容") }, required: ["path", "content"] } } },
+    { type: "function", function: { name: "edit_godot_script", description: "对 Godot 项目内文件做精准文本替换。", parameters: { type: "object", properties: { path: str("相对项目目录的路径"), old_string: str("要被替换的原文"), new_string: str("替换后的文本"), replace_all: { type: "boolean" } }, required: ["path", "old_string", "new_string"] } } },
   ];
 }
 
@@ -341,7 +345,7 @@ export function useHarness() {
   };
   /** 执行一个工具调用；返回文本与是否失败（网络失败或服务返回业务错误） */
   const execTool = async (name: string, args: Record<string, unknown>, threadId: string): Promise<{ text: string; failed: boolean }> => {
-    const godotNames = ["detect_godot_runtime","select_godot_runtime","create_godot_project","inspect_godot_project","list_godot_scenes","inspect_godot_scene","validate_godot_project","import_godot_assets","run_godot_project","run_godot_scene","stop_godot_game","restart_godot_game","export_godot_web","export_godot_build","collect_godot_diagnostics","open_godot_artifact","capture_game_preview"];
+    const godotNames = ["detect_godot_runtime","select_godot_runtime","create_godot_project","inspect_godot_project","list_godot_scenes","inspect_godot_scene","validate_godot_project","import_godot_assets","run_godot_project","run_godot_scene","stop_godot_game","restart_godot_game","export_godot_web","export_godot_build","collect_godot_diagnostics","open_godot_artifact","capture_game_preview","read_godot_script","write_godot_script","edit_godot_script"];
     if (godotNames.includes(name)) {
       const epMap: Record<string, string> = {
         detect_godot_runtime: "/detect", select_godot_runtime: "/select", create_godot_project: "/create",
@@ -350,6 +354,7 @@ export function useHarness() {
         run_godot_scene: "/run", stop_godot_game: "/stop", restart_godot_game: "/restart",
         export_godot_web: "/export-web", export_godot_build: "/export-web", collect_godot_diagnostics: "/diagnostics",
         open_godot_artifact: "/status", capture_game_preview: "/capture",
+        read_godot_script: "/read-file", write_godot_script: "/write-file", edit_godot_script: "/edit-file",
       };
       const p = epMap[name];
       if (!p) {

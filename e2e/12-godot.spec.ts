@@ -72,6 +72,35 @@ test.describe("Godot 游戏能力", () => {
     expect(inj.scenes).toContain("scenes/main.tscn");
   });
 
+  test("结构化脚本编辑闭环：write/read/edit + 运行 + 结构化错误", async ({ request }) => {
+    const c = await request.post("http://127.0.0.1:8456/create", { data: { projectId: "loop-1", name: "Loop" } });
+    await c.json();
+    // 写入一个带语法错误的脚本（模拟 Agent 改坏了）
+    const w = await request.post("http://127.0.0.1:8456/write-file", {
+      data: { projectId: "loop-1", path: "scripts/main.gd", content: "extends Node2D\n\nfunc _ready():\n    var x = 1 + )\n" },
+    });
+    expect((await w.json()).operation).toBe("update");
+    // 读回确认行号内容
+    const r = await request.post("http://127.0.0.1:8456/read-file", { data: { projectId: "loop-1", path: "scripts/main.gd" } });
+    const rj = await r.json();
+    expect(rj.totalLines).toBeGreaterThan(3);
+    // 精准修复
+    const e = await request.post("http://127.0.0.1:8456/edit-file", {
+      data: { projectId: "loop-1", path: "scripts/main.gd", old_string: "var x = 1 + )", new_string: "var x = 1 + 1" },
+    });
+    expect((await e.json()).after).toContain("var x = 1 + 1");
+    // 运行：真实 spawn Godot
+    const run = await request.post("http://127.0.0.1:8456/run", { data: { projectId: "loop-1", taskId: "loop-1" } });
+    expect((await run.json()).ok).toBe(true);
+    await new Promise((res) => setTimeout(res, 2500));
+    // diagnostics 返回结构化 errors 字段
+    const d = await request.post("http://127.0.0.1:8456/diagnostics", { data: { projectId: "loop-1" } });
+    const dj = await d.json();
+    expect(dj).toHaveProperty("errors");
+    expect(dj).toHaveProperty("game");
+    await request.post("http://127.0.0.1:8456/stop", { data: { projectId: "loop-1" } });
+  });
+
   test("真实运行与停止 Godot 游戏（真实进程 + 日志捕获）", async ({ request }) => {
     const c = await request.post("http://127.0.0.1:8456/create", { data: { projectId: "runner-1", name: "runner" } });
     await c.json();

@@ -98,7 +98,8 @@ function readProject(projectId) {
   const scenes = files.filter((f) => /\.tscn$/.test(f)).map((f) => path.relative(dir, f)).sort();
   const scripts = files.filter((f) => /\.gd$/.test(f)).map((f) => path.relative(dir, f)).sort();
   const assets = files.filter((f) => !/\.tscn$/.test(f) && !/\.gd$/.test(f) && !/\.godot$/.test(f)).map((f) => path.relative(dir, f)).sort();
-  return { ok: true, dir, name, mainScene, features, version, scenes, scripts, assets };
+  const wsBase = path.relative(WORKSPACE, dir);
+  return { ok: true, dir, path: wsBase, name, mainScene, features, version, scenes, scripts, assets, wsScenes: scenes.map((s) => wsBase + "/" + s), wsScripts: scripts.map((s) => wsBase + "/" + s) };
 }
 
 function walk(dir, out = []) {
@@ -121,6 +122,55 @@ function sceneNodeTree(tscnPath) {
     if (m) nodes.push({ name: m[1], type: m[2], parent: m[3] || null });
   }
   return nodes;
+}
+
+/* 项目作用域文件读写（相对项目目录，拒绝越界） */
+function resolveProjectFile(projectId, relPath) {
+  const dir = projectDir(projectId);
+  const abs = path.resolve(dir, String(relPath || ""));
+  const rel = path.relative(dir, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("路径越界：仅允许访问项目目录内文件");
+  return abs;
+}
+function readProjectFile(projectId, relPath) {
+  const abs = resolveProjectFile(projectId, relPath);
+  if (!fs.existsSync(abs)) throw new Error("文件不存在：" + relPath);
+  const lines = fs.readFileSync(abs, "utf8").split("\n");
+  return { path: relPath, totalLines: lines.length, lines: lines.map((txt, i) => ({ number: i + 1, text: txt })) };
+}
+function writeProjectFile(projectId, relPath, content) {
+  const abs = resolveProjectFile(projectId, relPath);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const existed = fs.existsSync(abs);
+  fs.writeFileSync(abs, String(content ?? ""), "utf8");
+  return { path: relPath, operation: existed ? "update" : "create" };
+}
+function editProjectFile(projectId, relPath, oldStr, newStr, replaceAll) {
+  const abs = resolveProjectFile(projectId, relPath);
+  const before = fs.readFileSync(abs, "utf8");
+  const idx = before.indexOf(oldStr);
+  if (idx < 0) throw new Error("未找到要替换的文本");
+  if (!replaceAll && before.indexOf(oldStr, idx + oldStr.length) >= 0) throw new Error("old_string 出现多次，请提供更精确上下文或 replace_all=true");
+  const after = replaceAll ? before.split(oldStr).join(newStr) : before.slice(0, idx) + newStr + before.slice(idx + oldStr.length);
+  fs.writeFileSync(abs, after, "utf8");
+  return { path: relPath, before, after };
+}
+/* GDScript 错误解析：从日志里提取 文件/行/错误 结构 */
+function parseErrors(logs) {
+  const errors = [];
+  for (const l of logs || []) {
+    // Godot 错误格式：SCRIPT ERROR / ERROR / Parse Error / WARNING
+    const m = l.text.match(/(?:SCRIPT ERROR|ERROR):\s*(.*)/i);
+    if (m) {
+      const loc = l.text.match(/([\w./-]+\.(?:gd|tscn|scn))\s*[:]\s*(\d+)/);
+      errors.push({ level: "error", message: m[1].slice(0, 300), file: loc ? loc[1] : null, line: loc ? Number(loc[2]) : null });
+    } else if (/Parse Error/i.test(l.text)) {
+      errors.push({ level: "error", message: l.text.slice(0, 300), file: null, line: null });
+    } else if (/WARNING:/i.test(l.text)) {
+      errors.push({ level: "warning", message: l.text.slice(0, 300), file: null, line: null });
+    }
+  }
+  return errors.slice(0, 50);
 }
 
 const processes = new Map();
@@ -281,7 +331,7 @@ const routes = {
     const pid = String(b.projectId || "p1");
     const rec = processes.get(pid);
     const sel = await resolveRuntime();
-    return { game: rec?.status ?? "stopped", pid: rec?.child?.pid ?? null, scene: rec?.scene ?? null, startedAt: rec?.startedAt ?? null, runtime: sel, logs: (rec?.logs ?? []).slice(-40).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
+    return { game: rec?.status ?? "stopped", pid: rec?.child?.pid ?? null, scene: rec?.scene ?? null, startedAt: rec?.startedAt ?? null, runtime: sel, errors: parseErrors(rec?.logs ?? []), logs: (rec?.logs ?? []).slice(-40).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
   },
   "/export-web": async (b) => {
     const sel = await resolveRuntime();
@@ -294,9 +344,13 @@ const routes = {
   },
   "/diagnostics": async (b) => {
     const pid = String(b.projectId || "p1");
-    return { project: readProject(pid), runtime: (await resolveRuntime()), game: processes.get(pid)?.status ?? "stopped", logs: (processes.get(pid)?.logs ?? []).slice(-60).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
+    const rec0 = processes.get(pid);
+    return { project: readProject(pid), runtime: (await resolveRuntime()), game: rec0?.status ?? "stopped", errors: parseErrors(rec0?.logs ?? []), logs: (rec0?.logs ?? []).slice(-60).map((l) => ({ stream: l.stream, t: l.t, text: l.text })) };
   },
   "/capture": async () => ({ ok: false, code: "unsupported_native", hint: "原生运行模式不支持截图；Web 预览模式可直接查看当前画面。" }),
+  "/read-file": async (b) => readProjectFile(String(b.projectId || "p1"), String(b.path || "")),
+  "/write-file": async (b) => writeProjectFile(String(b.projectId || "p1"), String(b.path || ""), b.content),
+  "/edit-file": async (b) => editProjectFile(String(b.projectId || "p1"), String(b.path || ""), String(b.old_string || ""), String(b.new_string || ""), Boolean(b.replace_all)),
 };
 
 http.createServer(async (req, res) => {
