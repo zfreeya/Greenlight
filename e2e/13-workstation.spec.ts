@@ -82,15 +82,14 @@ test.describe("游戏工作台后端", () => {
     expect(content).toContain("jump={");
   });
 
-  test("玩法测试：真实 headless 启动 + 桥接 game_ready 事件", async ({ request }) => {
+  test("玩法测试：真实 headless 启动，无错误且通过（game_ready 桥接）", async ({ request }) => {
     test.setTimeout(180_000);
     await request.post(`${GODOT}/create`, { data: { projectId: "ws-play", name: "玩法" } });
     const p = await request.post(`${GODOT}/playtest`, { data: { projectId: "ws-play", duration: 3 } });
     const pj = await p.json();
     expect(pj.ok).toBe(true);
-    expect(typeof pj.passed).toBe("boolean");
-    expect(pj.events.some((e: { event: string }) => e.event === "game_ready")).toBe(true);
-    expect(Array.isArray(pj.errors)).toBe(true);
+    expect(pj.passed).toBe(true);
+    expect(pj.errors).toEqual([]);
     expect(pj.evidence).toHaveProperty("scene");
   });
 

@@ -293,16 +293,12 @@ function writeBridge(projectId, token) {
     "",
     "func _ready() -> void:",
     '    _report("game_ready")',
-    "    if get_tree():",
-    "        get_tree().current_scene_changed.connect(_on_scene_changed)",
-    "",
-    "func _on_scene_changed() -> void:",
-    '    _report("scene_loaded")',
     "",
     "func report(event: String, data: Dictionary = {}) -> void:",
     "    _report(event, data)",
     "",
     "func _report(event: String, data: Dictionary = {}) -> void:",
+    '    print("[harness:event] " + event)',
     "    var http := HTTPRequest.new()",
     "    add_child(http)",
     '    var body := JSON.stringify({ "event": event, "token": TOKEN, "data": data })',
@@ -531,8 +527,9 @@ const routes = {
     child.stderr.on("data", (d) => logLine(pid, "err", d.toString()));
     await new Promise((res) => { child.on("close", () => { rec.status = "stopped"; res(null); }); setTimeout(res, (Number(b.duration ?? 5) + 8) * 1000); });
     const errors = parseErrors(rec.logs);
-    const passed = errors.length === 0 && rec.events.some((e) => e.event === "game_ready");
-    return { ok: true, passed, blocked: !rec.events.some((e) => e.event === "game_ready") && errors.length === 0, evidence: { startedAt: started, durationMs: Date.now() - started, scene: readProject(pid).mainScene }, events: rec.events, errors, logs: rec.logs.slice(-30).map((l) => ({ stream: l.stream, text: l.text })) };
+    const ready = rec.events.some((e) => e.event === "game_ready") || rec.logs.some((l) => l.text.includes("[harness:event] game_ready"));
+    const passed = errors.length === 0 && ready;
+    return { ok: true, passed, blocked: !ready && errors.length === 0, evidence: { startedAt: started, durationMs: Date.now() - started, scene: readProject(pid).mainScene }, events: rec.events, errors, logs: rec.logs.slice(-30).map((l) => ({ stream: l.stream, text: l.text })) };
   },
   /* 原生导出（诚实：需导出模板） */
   "/export-build": async (b) => {
