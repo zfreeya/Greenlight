@@ -173,6 +173,145 @@ function parseErrors(logs) {
   return errors.slice(0, 50);
 }
 
+/* ============ GameSpec + 阶段 + 检查点/版本 + 输入映射 ============ */
+const PHASES = ["concept", "prototype", "vertical_slice", "production", "alpha", "beta", "release_candidate", "released"];
+const SPEC_FILE = "gamespec.json";
+const META_DIR = ".harness";
+
+function metaDir(projectId) { return path.join(projectDir(projectId), META_DIR); }
+function specPath(projectId) { return path.join(metaDir(projectId), SPEC_FILE); }
+function historyPath(projectId) { return path.join(metaDir(projectId), "gamespec-history.jsonl"); }
+function checkpointDir(projectId) { return path.join(metaDir(projectId), "checkpoints"); }
+
+function defaultSpec(name) {
+  return {
+    title: name || "未命名游戏", oneSentencePitch: "", playerFantasy: "", targetAudience: "",
+    targetPlatforms: ["desktop", "web"], genre: "", sessionLength: "", designPillars: [],
+    coreLoop: "", playerVerbs: [], primaryMechanics: [], secondaryMechanics: [], controls: {}, camera: "",
+    winConditions: [], failConditions: [], progression: "", difficultyCurve: "", levels: [], entities: [],
+    economy: "", feedback: "", visualDirection: "", audioDirection: "", accessibility: [],
+    performanceBudgets: {}, contentBudget: "", outOfScope: [], risks: [], acceptanceCriteria: [], playtestPlan: [],
+    phase: "concept", version: 1, updatedAt: Date.now(),
+  };
+}
+function getSpec(projectId) {
+  fs.mkdirSync(metaDir(projectId), { recursive: true });
+  let spec;
+  try { spec = JSON.parse(fs.readFileSync(specPath(projectId), "utf8")); }
+  catch { spec = defaultSpec(readProject(projectId).name || "未命名游戏"); fs.writeFileSync(specPath(projectId), JSON.stringify(spec, null, 2)); }
+  return spec;
+}
+function saveSpecVersion(projectId, spec, reason, userRequest) {
+  fs.mkdirSync(metaDir(projectId), { recursive: true });
+  spec.version = (spec.version || 0) + 1;
+  spec.updatedAt = Date.now();
+  fs.writeFileSync(specPath(projectId), JSON.stringify(spec, null, 2));
+  fs.appendFileSync(historyPath(projectId), JSON.stringify({ ts: Date.now(), version: spec.version, phase: spec.phase, reason: reason || "", userRequest: userRequest || "", snapshot: spec }) + "\n");
+  return spec;
+}
+function copyProjectFiles(projectId, destDir) {
+  const dir = projectDir(projectId);
+  const out = [];
+  const copyRec = (d) => {
+    let e; try { e = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const x of e) {
+      if (x.name === META_DIR || x.name === ".godot" || x.name === "node_modules") continue;
+      const p = path.join(d, x.name);
+      const rel = path.relative(dir, p);
+      if (x.isDirectory()) { fs.mkdirSync(path.join(destDir, rel), { recursive: true }); copyRec(p); }
+      else { fs.mkdirSync(path.dirname(path.join(destDir, rel)), { recursive: true }); fs.copyFileSync(p, path.join(destDir, rel)); out.push(rel); }
+    }
+  };
+  copyRec(dir);
+  return out;
+}
+function checkpoint(projectId, reason, userRequest) {
+  const ts = Date.now();
+  const dest = path.join(checkpointDir(projectId), String(ts));
+  const files = copyProjectFiles(projectId, dest);
+  fs.writeFileSync(path.join(dest, "meta.json"), JSON.stringify({ ts, reason: reason || "", userRequest: userRequest || "", files }));
+  return { ts, files: files.length };
+}
+function listCheckpoints(projectId) {
+  const base = checkpointDir(projectId);
+  if (!fs.existsSync(base)) return [];
+  return fs.readdirSync(base).map((name) => {
+    try { return JSON.parse(fs.readFileSync(path.join(base, name, "meta.json"), "utf8")); }
+    catch { return { ts: Number(name), reason: "", files: [] }; }
+  }).sort((a, b) => b.ts - a.ts);
+}
+function restoreCheckpoint(projectId, ts) {
+  const src = path.join(checkpointDir(projectId), String(ts));
+  if (!fs.existsSync(src)) return { ok: false, code: "no_such_checkpoint" };
+  checkpoint(projectId, "restore-" + ts, "恢复到版本 " + ts);
+  const dir = projectDir(projectId);
+  // 删除现有项目文件（保留 .harness）
+  for (const e of fs.readdirSync(dir)) { if (e === META_DIR) continue; const p = path.join(dir, e); fs.rmSync(p, { recursive: true, force: true }); }
+  // 从检查点恢复（排除 meta.json）
+  const copyRec = (d) => {
+    for (const e of fs.readdirSync(d)) {
+      if (e === "meta.json") continue;
+      const p = path.join(d, e); const rel = path.relative(src, p);
+      if (fs.statSync(p).isDirectory()) { fs.mkdirSync(path.join(dir, rel), { recursive: true }); copyRec(p); }
+      else { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.copyFileSync(p, path.join(dir, rel)); }
+    }
+  };
+  copyRec(src);
+  return { ok: true, restored: ts };
+}
+function writeInputMap(projectId, actions) {
+  const dir = projectDir(projectId);
+  const gd = path.join(dir, "project.godot");
+  let txt = fs.readFileSync(gd, "utf8");
+  const lines = [];
+  for (const [name, ev] of Object.entries(actions || {})) {
+    const e = ev && typeof ev === "object" ? ev : {};
+    lines.push(name + "={");
+    if (e.deadzone) lines.push('"deadzone": ' + e.deadzone + ",");
+    for (const [k, v] of Object.entries(e.events || {})) {
+      for (const it of (Array.isArray(v) ? v : [v])) lines.push('"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"keycode":' + it + ',"physical_keycode":0,"unicode":0,"echo":false,"script":null) ],');
+    }
+    lines.push("}");
+  }
+  // 追加或合并 [input] 段
+  if (!/\[input\]/.test(txt)) txt += "\n\n[input]\n\n" + lines.join("\n") + "\n";
+  else {
+    txt = txt.replace(/\[input\]([\s\S]*?)(\n\[|$)/, (m, body, tail) => "\n[input]\n" + lines.join("\n") + "\n" + tail);
+  }
+  fs.writeFileSync(gd, txt);
+  return { ok: true, actions: Object.keys(actions || {}) };
+}
+
+function writeBridge(projectId, token) {
+  const dir = projectDir(projectId);
+  fs.mkdirSync(path.join(dir, "autoload"), { recursive: true });
+  const lines = [
+    "extends Node",
+    "# Harness Runtime Bridge (Autoload) — 仅在本机回环上报运行事件；生产导出时应移除或禁用",
+    'const TOKEN := "' + (token || "dev") + '"',
+    'const REPORT_URL := "http://127.0.0.1:' + PORT + '/bridge-event"',
+    "",
+    "func _ready() -> void:",
+    '    _report("game_ready")',
+    "    if get_tree():",
+    "        get_tree().current_scene_changed.connect(_on_scene_changed)",
+    "",
+    "func _on_scene_changed() -> void:",
+    '    _report("scene_loaded")',
+    "",
+    "func report(event: String, data: Dictionary = {}) -> void:",
+    "    _report(event, data)",
+    "",
+    "func _report(event: String, data: Dictionary = {}) -> void:",
+    "    var http := HTTPRequest.new()",
+    "    add_child(http)",
+    '    var body := JSON.stringify({ "event": event, "token": TOKEN, "data": data })',
+    '    http.request(REPORT_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, body)',
+  ];
+  fs.writeFileSync(path.join(dir, "autoload", "runtime_bridge.gd"), lines.join("\n"));
+  return { ok: true, port: PORT };
+}
+
 const processes = new Map();
 function logLine(projectId, stream, text) {
   const p = processes.get(projectId);
@@ -190,7 +329,8 @@ async function startGodot(projectId, taskId, scene) {
   const args = ["--path", dir];
   if (scene) args.push(scene);
   const child = spawn(det.path, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
-  const rec = { child, logs: [], startedAt: Date.now(), status: "running", exit: null, taskId, scene };
+  const rec = { child, logs: [], startedAt: Date.now(), status: "running", exit: null, taskId, scene, token: "run-" + Date.now() + "-" + Math.random().toString(36).slice(2), events: [] };
+  writeBridge(projectId, rec.token);
   processes.set(projectId, rec);
   child.stdout.on("data", (d) => logLine(projectId, "out", d.toString()));
   child.stderr.on("data", (d) => logLine(projectId, "err", d.toString()));
@@ -285,6 +425,12 @@ function createProject(projectId, name) {
     "",
   ].join("\n"));
   fs.writeFileSync(path.join(dir, "icon.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#3F6D9C"/></svg>');
+  // 注册 Harness Runtime Bridge（Autoload）
+  const gd = path.join(dir, "project.godot");
+  fs.appendFileSync(gd, "\n[autoload]\nHarnessBridge=\"*res://autoload/runtime_bridge.gd\"\n");
+  writeBridge(projectId, "dev");
+  // 初始化 GameSpec
+  getSpec(projectId);
   return readProject(projectId);
 }
 
@@ -349,6 +495,63 @@ const routes = {
   },
   "/capture": async () => ({ ok: false, code: "unsupported_native", hint: "原生运行模式不支持截图；Web 预览模式可直接查看当前画面。" }),
   "/read-file": async (b) => readProjectFile(String(b.projectId || "p1"), String(b.path || "")),
+  /* GameSpec + 阶段 */
+  "/spec-get": async (b) => { const pid = String(b.projectId || "p1"); return { ok: true, spec: getSpec(pid), history: (() => { try { return fs.readFileSync(historyPath(pid), "utf8").trim().split("\n").filter(Boolean).slice(-20).map((l) => JSON.parse(l)); } catch { return []; } })() }; },
+  "/spec-create": async (b) => { const pid = String(b.projectId || "p1"); const spec = saveSpecVersion(pid, { ...defaultSpec(String(b.title || "")), ...(b.spec || {}), phase: b.phase || "concept" }, "create_game_spec", String(b.userRequest || "")); return { ok: true, spec }; },
+  "/spec-update": async (b) => { const pid = String(b.projectId || "p1"); const cur = getSpec(pid); const merged = { ...cur, ...(b.spec || {}) }; if (b.phase && PHASES.includes(b.phase)) merged.phase = b.phase; const spec = saveSpecVersion(pid, merged, b.reason || "update_game_spec", String(b.userRequest || "")); return { ok: true, spec }; },
+  "/spec-set-phase": async (b) => { const pid = String(b.projectId || "p1"); const spec = getSpec(pid); if (!PHASES.includes(b.phase)) return { ok: false, code: "bad_phase" }; spec.phase = b.phase; const s = saveSpecVersion(pid, spec, "set_phase:" + b.phase, String(b.userRequest || "")); return { ok: true, spec: s }; },
+  /* 检查点 / 版本 */
+  "/checkpoint": async (b) => { const pid = String(b.projectId || "p1"); const r = checkpoint(pid, b.reason || "", String(b.userRequest || "")); return { ok: true, ...r }; },
+  "/versions": async (b) => ({ ok: true, checkpoints: listCheckpoints(String(b.projectId || "p1")), phases: PHASES }),
+  "/restore-version": async (b) => restoreCheckpoint(String(b.projectId || "p1"), Number(b.ts)),
+  "/compare-versions": async (b) => {
+    const pid = String(b.projectId || "p1");
+    const list = listCheckpoints(pid);
+    const a = list.find((c) => c.ts === Number(b.a));
+    const bCp = list.find((c) => c.ts === Number(b.b));
+    return { ok: true, a, b: bCp, diff: { aFiles: a?.files?.length ?? 0, bFiles: bCp?.files?.length ?? 0, aReason: a?.reason ?? "", bReason: bCp?.reason ?? "" } };
+  },
+  /* 输入映射 */
+  "/input-map": async (b) => writeInputMap(String(b.projectId || "p1"), b.actions || {}),
+  /* 玩法测试：真实 headless 启动 + 桥接事件 + 错误 */
+  "/playtest": async (b) => {
+    const pid = String(b.projectId || "p1");
+    const dir = projectDir(pid);
+    if (!fs.existsSync(path.join(dir, "project.godot"))) return { ok: false, code: "missing_project_file" };
+    const det = await resolveRuntime();
+    if (!det) return { ok: false, code: "runtime_missing" };
+    const started = Date.now();
+    const token = "pt-" + started + "-" + Math.random().toString(36).slice(2);
+    const rec = { child: null, logs: [], status: "running", events: [], token };
+    writeBridge(pid, token);
+    processes.set(pid, rec);
+    const child = spawn(det.path, ["--headless", "--path", dir, "--quit-after", String(b.duration ?? 5)], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    rec.child = child;
+    child.stdout.on("data", (d) => logLine(pid, "out", d.toString()));
+    child.stderr.on("data", (d) => logLine(pid, "err", d.toString()));
+    await new Promise((res) => { child.on("close", () => { rec.status = "stopped"; res(null); }); setTimeout(res, (Number(b.duration ?? 5) + 8) * 1000); });
+    const errors = parseErrors(rec.logs);
+    const passed = errors.length === 0 && rec.events.some((e) => e.event === "game_ready");
+    return { ok: true, passed, blocked: !rec.events.some((e) => e.event === "game_ready") && errors.length === 0, evidence: { startedAt: started, durationMs: Date.now() - started, scene: readProject(pid).mainScene }, events: rec.events, errors, logs: rec.logs.slice(-30).map((l) => ({ stream: l.stream, text: l.text })) };
+  },
+  /* 原生导出（诚实：需导出模板） */
+  "/export-build": async (b) => {
+    const pid = String(b.projectId || "p1");
+    const sel = await resolveRuntime();
+    if (!sel) return { ok: false, code: "runtime_missing", hint: "需要 Godot 运行时。" };
+    const v = sel.major + "." + sel.minor + (sel.patch ? "." + sel.patch : "");
+    const base = process.platform === "win32" ? path.join(os.homedir(), "AppData", "Roaming", "Godot", "export_templates", v) : path.join(os.homedir(), ".local", "share", "godot", "export_templates", v);
+    const hasTpl = fs.existsSync(path.join(base, "macos.zip")) || fs.existsSync(path.join(base, "linux_debug.x86_64")) || fs.existsSync(path.join(base, "windows_debug_x86_64.exe"));
+    if (!hasTpl) return { ok: false, code: "missing_templates", hint: "缺少导出模板（" + base + "）。需通过 Godot 官方安装模板后重试。" };
+    return { ok: false, code: "not_implemented", hint: "已检测到导出模板；受控导出通道将在后续版本实现。" };
+  },
+  /* 桥接事件上报（本机回环 + 令牌校验） */
+  "/bridge-event": async (b) => {
+    for (const [pid, rec] of processes.entries()) {
+      if (rec.token && rec.token === b.token) { (rec.events = rec.events || []).push({ event: String(b.event || "unknown"), data: b.data || {}, t: Date.now() }); return { ok: true }; }
+    }
+    return { ok: false, code: "bad_token" };
+  },
   "/write-file": async (b) => writeProjectFile(String(b.projectId || "p1"), String(b.path || ""), b.content),
   "/edit-file": async (b) => editProjectFile(String(b.projectId || "p1"), String(b.path || ""), String(b.old_string || ""), String(b.new_string || ""), Boolean(b.replace_all)),
 };

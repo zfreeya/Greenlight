@@ -57,6 +57,15 @@ function buildTools() {
     { type: "function", function: { name: "read", description: "读取工作目录内的文本文件，返回带行号的内容。", parameters: { type: "object", properties: { path: str("相对工作目录的文件路径"), offset: { type: "integer", description: "起始行号，默认 1" }, limit: { type: "integer", description: "最多返回行数，默认 2000" } }, required: ["path"] } } },
     { type: "function", function: { name: "write", description: "创建或整体覆盖工作目录内的文件。", parameters: { type: "object", properties: { path: str("相对工作目录的文件路径"), content: str("完整文件内容") }, required: ["path", "content"] } } },
     { type: "function", function: { name: "edit", description: "对现有文件做精准文本替换。old_string 必须与文件内容完全一致且唯一（除非 replace_all=true）。", parameters: { type: "object", properties: { path: str("相对工作目录的文件路径"), old_string: str("要被替换的原文"), new_string: str("替换后的新文本"), replace_all: { type: "boolean", description: "是否替换全部匹配，默认 false" } }, required: ["path", "old_string", "new_string"] } } },
+    { type: "function", function: { name: "create_game_spec", description: "创建或初始化游戏设计文档 GameSpec（标题、核心循环、胜负条件等）。", parameters: { type: "object", properties: { title: str("游戏标题"), spec: { type: "object", description: "GameSpec 字段（oneSentencePitch/winConditions/failConditions/coreLoop/designPillars 等）" } }, required: ["title"] } } },
+    { type: "function", function: { name: "update_game_spec", description: "更新 GameSpec 并记录修改原因，版本号递增。", parameters: { type: "object", properties: { spec: { type: "object", description: "要更新或合并的字段" }, reason: str("修改原因分类"), phase: str("可选项目阶段") }, required: ["spec"] } } },
+    { type: "function", function: { name: "inspect_game_spec", description: "读取当前 GameSpec 与修改历史。", parameters: { type: "object", properties: {} } } },
+    { type: "function", function: { name: "configure_input_map", description: "写入 Godot 输入映射。", parameters: { type: "object", properties: { actions: { type: "object", description: "动作名到 events 的映射" } }, required: ["actions"] } } },
+    { type: "function", function: { name: "execute_playtest", description: "headless 启动游戏执行自动化玩法测试，返回通过/失败、事件与错误。", parameters: { type: "object", properties: { duration: { type: "integer", description: "运行秒数" } } } } },
+    { type: "function", function: { name: "save_game_version", description: "保存当前项目快照为可恢复版本，返回 ts。", parameters: { type: "object", properties: { reason: str("版本原因") } } } },
+    { type: "function", function: { name: "compare_game_versions", description: "比较两个版本快照的文件差异。", parameters: { type: "object", properties: { a: { type: "integer", description: "版本 ts" }, b: { type: "integer", description: "版本 ts" } }, required: ["a", "b"] } } },
+    { type: "function", function: { name: "export_game_build", description: "导出可运行构建（需要导出模板）。", parameters: { type: "object", properties: {} } } },
+    { type: "function", function: { name: "capture_game_screenshot", description: "获取游戏截图或预览地址。", parameters: { type: "object", properties: {} } } },
     { type: "function", function: { name: "glob", description: "按 glob 模式查找文件（支持 * 与 **）。", parameters: { type: "object", properties: { pattern: str("glob 模式，如 **/*.ts"), path: str("查找起点目录，默认工作目录根") }, required: ["pattern"] } } },
     { type: "function", function: { name: "grep", description: "在文件内容中按正则搜索，返回匹配行（含文件与行号）。", parameters: { type: "object", properties: { pattern: str("正则表达式"), path: str("搜索目录，默认工作目录根"), include: str("文件名过滤 glob，如 *.ts") }, required: ["pattern"] } } },
     { type: "function", function: { name: "fetch", description: "抓取一个 http/https 网页并返回文本内容（截断到 300KB）。", parameters: { type: "object", properties: { url: str("完整 URL，如 https://example.com") }, required: ["url"] } } },
@@ -345,7 +354,7 @@ export function useHarness() {
   };
   /** 执行一个工具调用；返回文本与是否失败（网络失败或服务返回业务错误） */
   const execTool = async (name: string, args: Record<string, unknown>, threadId: string): Promise<{ text: string; failed: boolean }> => {
-    const godotNames = ["detect_godot_runtime","select_godot_runtime","create_godot_project","inspect_godot_project","list_godot_scenes","inspect_godot_scene","validate_godot_project","import_godot_assets","run_godot_project","run_godot_scene","stop_godot_game","restart_godot_game","export_godot_web","export_godot_build","collect_godot_diagnostics","open_godot_artifact","capture_game_preview","read_godot_script","write_godot_script","edit_godot_script"];
+    const godotNames = ["detect_godot_runtime","select_godot_runtime","create_godot_project","inspect_godot_project","list_godot_scenes","inspect_godot_scene","validate_godot_project","import_godot_assets","run_godot_project","run_godot_scene","stop_godot_game","restart_godot_game","export_godot_web","export_godot_build","collect_godot_diagnostics","open_godot_artifact","capture_game_preview","read_godot_script","write_godot_script","edit_godot_script","create_game_spec","update_game_spec","inspect_game_spec","configure_input_map","execute_playtest","compare_game_versions","save_game_version","export_game_build","capture_game_screenshot"];
     if (godotNames.includes(name)) {
       const epMap: Record<string, string> = {
         detect_godot_runtime: "/detect", select_godot_runtime: "/select", create_godot_project: "/create",
@@ -355,6 +364,9 @@ export function useHarness() {
         export_godot_web: "/export-web", export_godot_build: "/export-web", collect_godot_diagnostics: "/diagnostics",
         open_godot_artifact: "/status", capture_game_preview: "/capture",
         read_godot_script: "/read-file", write_godot_script: "/write-file", edit_godot_script: "/edit-file",
+        create_game_spec: "/spec-create", update_game_spec: "/spec-update", inspect_game_spec: "/spec-get",
+        configure_input_map: "/input-map", execute_playtest: "/playtest", compare_game_versions: "/compare-versions",
+        save_game_version: "/checkpoint", export_game_build: "/export-build", capture_game_screenshot: "/capture",
       };
       const p = epMap[name];
       if (!p) {

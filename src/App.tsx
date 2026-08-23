@@ -106,11 +106,13 @@ function NewTaskMenu({ h }: { h: Harness }) {
 
 /* ================= Godot 游戏工作区（右侧面板，真实服务驱动） ================= */
 function GameWorkspace({ h }: { h: Harness }) {
-  const [tab, setTab] = useState<"game" | "scene" | "console">("game");
+  const [tab, setTab] = useState<"game" | "scene" | "console" | "spec" | "build">("game");
   const [engine, setEngine] = useState<{ status: string; runtime: { path?: string; version?: string } | null }>({ status: "unavailable", runtime: null });
   const [game, setGame] = useState<{ status: string; scene?: string; logs: { stream: string; text: string }[] }>({ status: "stopped", logs: [] });
   const [proj, setProj] = useState<{ ok?: boolean; name?: string; mainScene?: string; scenes?: string[]; scripts?: string[]; tree?: { name: string; type: string; parent: string | null }[] }>({});
   const [selPath, setSelPath] = useState("");
+  const [spec, setSpec] = useState<{ title?: string; phase?: string; version?: number; winConditions?: string[]; failConditions?: string[]; coreLoop?: string; updatedAt?: number }>({});
+  const [buildRes, setBuildRes] = useState<{ label: string; detail: string; ok: boolean } | null>(null);
   const g = h.godotCfg.url;
   const pid = h.cur.id;
   const call = async (ep: string, body: Record<string, unknown> = {}) => {
@@ -118,10 +120,11 @@ function GameWorkspace({ h }: { h: Harness }) {
     catch { return { ok: false, error: "Godot 服务不可达" }; }
   };
   const refresh = async () => {
-    const [hres, sres, dres, scres] = await Promise.all([fetch(g + "/health").then(r => r.json()).catch(() => ({})), call("/status"), call("/diagnostics"), call("/scenes")]);
+    const [hres, sres, dres, scres, sgres] = await Promise.all([fetch(g + "/health").then(r => r.json()).catch(() => ({})), call("/status"), call("/diagnostics"), call("/scenes"), call("/spec-get")]);
     setEngine({ status: hres.engineStatus || "unavailable", runtime: hres.runtime || null });
     setGame({ status: sres.game || "stopped", scene: sres.scene, logs: sres.logs || [] });
     setProj({ ...(dres.project || {}), ...(scres.ok ? { tree: scres.tree, scenes: scres.scenes, scripts: scres.scripts, mainScene: scres.mainScene } : {}) });
+    if (sgres && sgres.spec) setSpec(sgres.spec);
   };
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv); }, [g, pid]);
   const btn = (label: string, run: () => void, primary = false) => <button className={"btn " + (primary ? "btn-primary" : "btn-secondary") + " btn-sm"} onClick={run}>{label}</button>;
@@ -145,7 +148,7 @@ function GameWorkspace({ h }: { h: Harness }) {
         {engine.status === "unavailable" && <div className="gw-hint">未安装 Godot。可手动选择可执行文件，或将 Godot 放入 /Applications/Godot.app 后点「检测」。下载能力将在后续版本提供（不会伪造安装状态）。</div>}
       </div>
       <div className="gw-tabs">
-        {(["game", "scene", "console"] as const).map((k) => <button key={k} className={"gw-tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{k === "game" ? "游戏" : k === "scene" ? "场景" : "控制台"}</button>)}
+        {(["game", "scene", "console", "spec", "build"] as const).map((k) => <button key={k} className={"gw-tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{k === "game" ? "游戏" : k === "scene" ? "场景" : k === "console" ? "控制台" : k === "spec" ? "改动" : "构建"}</button>)}
       </div>
       <div className="gw-body">
         {tab === "game" && (
@@ -174,6 +177,28 @@ function GameWorkspace({ h }: { h: Harness }) {
           <div className="gw-console mono">
             {(game.logs || []).slice(-30).map((l, i) => <div key={i} className={"gw-log " + l.stream}>{l.text}</div>)}
             {(game.logs || []).length === 0 && <div className="gw-hint">暂无运行日志。</div>}
+          </div>
+        )}
+        {tab === "spec" && (
+          <div className="gw-spec">
+            <div className="gw-status">设计文档 · <b>{spec.title || "未命名游戏"}</b> · v{spec.version ?? 0} · 阶段 <b>{spec.phase || "concept"}</b></div>
+            <div className="gw-label">核心循环：{spec.coreLoop || "（未填写）"}</div>
+            <div className="gw-label">胜利条件</div>
+            {(spec.winConditions || []).map((c, i) => <div key={i} className="gw-node">✓ {c}</div>)}
+            {(spec.winConditions || []).length === 0 && <div className="gw-hint">尚未定义胜利条件。可让 Agent 调用 create_game_spec。</div>}
+            <div className="gw-label">失败条件</div>
+            {(spec.failConditions || []).map((c, i) => <div key={i} className="gw-node">✕ {c}</div>)}
+            {spec.updatedAt ? <div className="gw-hint">更新于 {new Date(spec.updatedAt).toLocaleString()}</div> : null}
+          </div>
+        )}
+        {tab === "build" && (
+          <div className="gw-build">
+            <div className="gw-actions">
+              {btn("玩法测试", async () => { setBuildRes({ label: "正在测试…", detail: "", ok: true }); const r = await call("/playtest", { duration: 3 }); setBuildRes(r.ok ? { label: r.passed ? "玩法测试通过" : "玩法测试未通过", detail: "事件 " + (r.events || []).length + " 个 · 错误 " + (r.errors || []).length + " 个", ok: r.passed } : { label: "玩法测试失败", detail: r.code || r.error || "", ok: false }); refresh(); }, true)}
+              {btn("导出构建", async () => { const r = await call("/export-build"); setBuildRes(r.ok ? { label: "已导出构建", detail: "", ok: true } : { label: "导出不可用", detail: (r.hint || r.code || ""), ok: false }); })}
+            </div>
+            {buildRes && <div className="gw-hint"><b>{buildRes.label}</b>{buildRes.detail ? " · " + buildRes.detail : ""}</div>}
+            <div className="gw-hint">玩法测试以 headless 模式真实启动游戏并收集桥接事件与错误；导出构建需要安装 Godot 导出模板。</div>
           </div>
         )}
       </div>
@@ -252,6 +277,15 @@ function toolLineSummary(g: Msg): string {
   if (name === "read_godot_script") return "已读取脚本 " + String(args.path || "");
   if (name === "write_godot_script") return "已写入脚本 " + String(args.path || "");
   if (name === "edit_godot_script") return "已修改脚本 " + String(args.path || "");
+if (name === "create_game_spec") return "已生成游戏设计文档";
+if (name === "update_game_spec") return "已更新游戏设计文档";
+if (name === "inspect_game_spec") return "已读取游戏设计文档";
+if (name === "configure_input_map") return "已配置输入映射";
+if (name === "execute_playtest") return (g.toolResult && /"passed":true/.test(g.toolResult)) ? "玩法测试通过" : "玩法测试未通过";
+if (name === "save_game_version") return "已保存游戏版本快照";
+if (name === "compare_game_versions") return "已比较游戏版本";
+if (name === "export_game_build") return (g.toolResult && /"ok":true/.test(g.toolResult)) ? "已导出构建" : "导出失败（缺模板）";
+if (name === "capture_game_screenshot") return "已获取截图";
   if (name === "detect_godot_runtime") return (g.toolResult && /"found":true/.test(g.toolResult)) ? "已识别 Godot 运行时" : "未检测到 Godot 运行时";
   if (name === "select_godot_runtime") return (g.toolResult && /"ok":true/.test(g.toolResult)) ? "已选择 Godot 运行时" : "Godot 运行时选择失败";
   if (name === "create_godot_project") return "已创建 Godot 项目";
