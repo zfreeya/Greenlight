@@ -1,12 +1,12 @@
 [package]
-name = "harness-desktop"
+name = "greenlight"
 version = "0.1.0"
-description = "DeepSeek Harness Desktop - 对话式桌面 Agent"
+description = "Greenlight - AI 导演工作台"
 authors = ["harness"]
 edition = "2021"
 
 [lib]
-name = "harness_desktop_lib"
+name = "greenlight_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

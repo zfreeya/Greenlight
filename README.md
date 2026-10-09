@@ -1,4 +1,4 @@
-# Harness Desktop · AI 导演工作台
+# Greenlight · AI 导演工作台
 
 > 把 AI 视频从「抽一次卡」变成一条**可管理的拍摄流水线**——项目、场景、镜头、Take、时间线、成片，全在一个 macOS 桌面应用里闭环。
 
@@ -14,7 +14,7 @@
 
 ## 这是什么
 
-**Harness Desktop 的重心是一个 AI 导演工作台（Harness Director）**。
+**Greenlight 的重心是一个 AI 导演工作台（Greenlight Director）**。
 
 它不是「输入一句话，等一条视频」的生成器，而是一套按真实剧组结构组织的生产系统：**项目 → 场景 → 镜头 → Take → 素材 → 时间线 → 成片**。镜头交给火山方舟 Seedance 生成，剪辑、字幕、转场、配乐、合片全部走本地 FFmpeg。
 
@@ -110,8 +110,8 @@ draft → awaiting_approval → queued → generating → succeeded / failed / c
 **环境**：macOS · Node 20+ · Rust（Tauri）· Python 3.10+ · FFmpeg · Godot（可选，游戏能力用）
 
 ```bash
-git clone git@github.com:zfreeya/harness-desktop.git
-cd harness-desktop
+git clone git@github.com:zfreeya/greenlight.git
+cd greenlight
 npm install
 ```
 
