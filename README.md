@@ -107,6 +107,20 @@ draft → awaiting_approval → queued → generating → succeeded / failed / c
 
 ## 快速开始
 
+### 方式一：直接下载（macOS）
+
+从 [Releases](https://github.com/zfreeya/greenlight/releases) 下载 `Greenlight-macOS-*.zip`（约 350MB，内嵌 Node 运行时与全部本地服务，无需另装依赖）：
+
+```bash
+unzip Greenlight-macOS-v0.1.0.zip -d /Applications   # 或解压后拖进「应用程序」
+xattr -cr /Applications/Greenlight.app                # 未签名应用，首次启动前执行一次
+open /Applications/Greenlight.app
+```
+
+应用自带记忆与工具服务（首启自动注册为 launchd 常驻，秒开不打断）；项目数据落在 `~/Harness/`。对话用的 DeepSeek Key 在首次启动时引导配置，视频生成需要另配火山方舟 `ARK_API_KEY`（见下）。
+
+### 方式二：从源码构建
+
 **环境**：macOS · Node 20+ · Rust（Tauri）· Python 3.10+ · FFmpeg · Godot（可选，游戏能力用）
 
 ```bash
