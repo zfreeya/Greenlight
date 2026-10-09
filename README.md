@@ -91,17 +91,17 @@ draft → awaiting_approval → queued → generating → succeeded / failed / c
 
 仓库里放了两条真实跑出来的片子（都在 `assets/videos/`）：
 
-**《最后一班车》** —— 完整走完「分镜 → 生成 → 剪辑 → 导出」的成片：
+**《最后一班车》** —— 完整走完「分镜 → 生成 → 剪辑 → 导出」的成片（15s · 1080p）：
 
-https://github.com/zfreeya/harness-desktop/raw/main/assets/videos/last-bus.mp4
+![最后一班车](assets/videos/last-bus.gif)
 
-<video src="assets/videos/last-bus.mp4" controls width="640"></video>
+[下载完整视频 · 1080p mp4](assets/videos/last-bus.mp4)
 
-**《打烊之后》** —— 单个镜头的生成结果（Take 01），12 条分镜里的一条：
+**《打烊之后》** —— 单个镜头的生成结果（Take 01，12 条分镜之一，5s · 1080p）：
 
-https://github.com/zfreeya/harness-desktop/raw/main/assets/videos/closing-time-take-01.mp4
+![打烊之后 · Take 01](assets/videos/closing-time-take-01.gif)
 
-<video src="assets/videos/closing-time-take-01.mp4" controls width="640"></video>
+[下载完整视频 · 1080p mp4](assets/videos/closing-time-take-01.mp4)
 
 ---
 
