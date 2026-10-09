@@ -37,6 +37,68 @@ DeepSeek Harness 桌面端 - 对话式 Agent 工作台（Tauri 2 + React + TypeS
 
 设计规范见仓库根目录 `DESIGN.md`；记忆技术设计见 `docs/MEMORY.md`；工具执行服务设计见 `docs/TOOLS.md`。
 
+## Director 工作台（Seedance 导演生产系统）
+
+`harness-desktop` 内置一套 AI 导演工作台（Harness Director），面向火山方舟 Seedance，
+用 FFmpeg 做本地后期。创作层级 `Project → Scene → Shot → Take → Asset → Timeline → Render`，
+核心目标是**可持续创作、不因每次小改动重复调用付费模型**。
+
+**关键机制**（详见 `docs/seedance-director-architecture.md` / `docs/generation-state-machine.md`）：
+
+- **Generation Spec + SHA-256 `generation_key` + SQLite 缓存**：相同请求命中缓存直接复用，
+  不调用 API；网络重试不重复下单（幂等）。
+- **Dirty 分离**：改 Prompt/参考 → 只标记该 Shot Generation dirty；改时间线/字幕/配乐/转场 →
+  只标记 Render dirty（只跑 FFmpeg）。
+- **Take 模型**：一个镜头多个 Take，重新生成永远新建 Take，不覆盖旧结果。
+- **任务状态机**：`draft → awaiting_approval → queued → generating → succeeded/failed/cancelled →
+  downloading → ready_for_review → selected → locked`，SQLite 持久化 + 重启恢复。
+- **付费保护**：只有显式点击「生成镜头 / 重新生成新 Take / 生成选中镜头 / 批量生成」并经
+  **确认面板**确认后才调用 Seedance；改项目名/镜头顺序/字幕/转场/音乐/时间线/打开项目/自动保存/
+  编辑提示词/切预览比例/普通预览**绝不调用** Seedance。
+- **Python sidecar**：`tools-server/director/seedance/worker.py` 经 JSON-RPC stdin/stdout 跑官方
+  SDK，结构化参数，Agent Plan / Platform 通道隔离，失败不静默换通道。
+
+**配置 Seedance（Agent Plan / Platform）**：
+
+```bash
+# 1) 安装 Python SDK（官方）
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --upgrade "volcengine-python-sdk[ark]"
+
+# 2) 开发环境 API Key（正式桌面端写入 macOS Keychain，见 docs/security.md）
+export ARK_API_KEY="你的Key"
+export SEEDANCE_BILLING_MODE="agent_plan"   # 或 platform
+export SEEDANCE_MODEL="你的模型ID"           # 不写死，由设置页配置
+```
+
+**安装 FFmpeg（未安装时，仅返回计划，不默认改 shell 配置）**：
+
+```bash
+# 优先清华镜像，其次中科大，最后官方（不重复安装，不写 .zprofile，不改 Homebrew remote）
+HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api" \
+HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles" \
+brew install ffmpeg
+```
+
+**启动 Director 服务与测试**：
+
+```bash
+node tools-server/director-server.mjs --workspace ./workspace   # 127.0.0.1:8456
+node --test tools-server/director/*.test.mjs                    # 全部单元 + 集成测试（离线，不调用付费 API）
+RUN_PAID_E2E=1 PAID_E2E_CONFIRM=yes ARK_API_KEY=... \
+  node --test tools-server/director/paid-e2e.test.mjs           # 真实付费冒烟（双门禁）
+```
+
+**macOS 开发启动 / 打包**：
+
+```bash
+npm install
+npm run tauri dev          # 开发模式（devUrl http://localhost:1420）
+npm run build              # 前端 tsc + vite build
+npm run tauri build        # → src-tauri/target/release/bundle/macos/Harness.app
+```
+
 ## 打包产物
 
 ```bash

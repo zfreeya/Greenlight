@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useHarness, Harness } from "./harness";
 import { Msg, Deliverable, TaskStatus, EXEC_MODES, ExecMode, taskTitle, statusBadge, agentLabel, formatRelative, formatClock } from "./state";
 import Markdown from "./Markdown";
+import { DirectorWorkspace } from "./DirectorWorkspace";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -81,11 +82,12 @@ function TitleBar({ h, sideOpen, onToggleSide }: { h: Harness; sideOpen: boolean
 /* ================= 新建任务类型菜单 ================= */
 function NewTaskMenu({ h }: { h: Harness }) {
   const [open, setOpen] = useState(false);
-  const types: [string, "general" | "web" | "godot" | "import_godot", string][] = [
+  const types: [string, "general" | "web" | "godot" | "import_godot" | "director", string][] = [
     ["普通任务", "general", "对话 + 工具执行，如整理文件、写脚本"],
     ["网页应用", "web", "生成可预览的 HTML 网页"],
     ["Godot 游戏", "godot", "创建并运行真实 Godot 2D 游戏项目"],
     ["导入 Godot 项目", "import_godot", "导入已有 Godot 项目目录"],
+    ["视频制作", "director", "Harness Director：创意→剧本→导演→分镜→生成→剪辑→导出"],
   ];
   return (
     <div className="newtask-wrap">
@@ -231,7 +233,7 @@ function Sidebar({ h }: { h: Harness }) {
             <div key={t.id} className={"thread-item" + (t.id === h.current ? " on" : "")} onClick={() => h.setCurrent(t.id)} title={title + "（" + b.label + "）"}>
               <span className={"tstatus " + t.status} data-status={t.status} aria-label={b.label} />
               <div className="t-main">
-                <div className="tt">{title}</div>
+                <div className="tt">{title}{t.kind === "director" && <span className="side-tag">导演</span>}</div>
                 <div className="tm"><span className="tst">{formatRelative(t.updatedAt)}</span></div>
               </div>
             </div>
@@ -890,7 +892,7 @@ function Toasts({ h }: { h: Harness }) {
 /* ================= App（三栏：侧栏 + 任务区 + 预览区，可拖拽分隔） ================= */
 export default function App() {
   const h = useHarness();
-  const [sideOpen, setSideOpen] = useState(() => typeof window !== "undefined" && window.innerWidth > 920);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
   const [previewPct, setPreviewPct] = useState(0.52);
   const dragging = useRef(false);
 
@@ -941,15 +943,21 @@ export default function App() {
 
   return (
     <>
-      <div id="window" className={"app-on" + (sideOpen ? " side-open" : "") + (h.previewOpen ? " pv-open" : "")}>
-        <TitleBar h={h} sideOpen={sideOpen} onToggleSide={() => setSideOpen((v) => !v)} />
+      <div id="window" className={"app-on" + (sideCollapsed ? " side-collapsed" : "") + (h.previewOpen ? " pv-open" : "")}>
+        <TitleBar h={h} sideOpen={!sideCollapsed} onToggleSide={() => setSideCollapsed((v) => !v)} />
         <div className="shell">
           <Sidebar h={h} />
-          <ChatView h={h} />
-          {h.previewOpen && <div className="pv-divider" title="拖动调整预览宽度" onMouseDown={() => { dragging.current = true; document.body.classList.add("resizing"); }} />}
-          {h.cur.kind === "godot" || h.cur.kind === "import_godot"
-            ? <GameWorkspace h={h} />
-            : <PreviewPane h={h} previewPct={previewPct} onFocusChat={() => h.closePreview()} onFocusPreview={() => setPreviewPct(0.72)} />}
+          {h.cur.kind === "director"
+            ? <DirectorWorkspace h={h} />
+            : (
+              <>
+                <ChatView h={h} />
+                {h.previewOpen && <div className="pv-divider" title="拖动调整预览宽度" onMouseDown={() => { dragging.current = true; document.body.classList.add("resizing"); }} />}
+                {h.cur.kind === "godot" || h.cur.kind === "import_godot"
+                  ? <GameWorkspace h={h} />
+                  : <PreviewPane h={h} previewPct={previewPct} onFocusChat={() => h.closePreview()} onFocusPreview={() => setPreviewPct(0.72)} />}
+              </>
+            )}
         </div>
       </div>
       <CommandPalette h={h} />

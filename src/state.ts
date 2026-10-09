@@ -165,7 +165,7 @@ export function formatClock(epoch: number): string {
 
 /* 执行模式 */
 /* ================= Godot 能力状态模型（真实服务驱动） ================= */
-export type TaskKind = "general" | "web" | "godot" | "import_godot";
+export type TaskKind = "general" | "web" | "godot" | "import_godot" | "director";
 export type EngineStatus = "unavailable" | "detecting" | "downloading" | "installing" | "ready" | "incompatible" | "crashed";
 export type GameStatus = "stopped" | "starting" | "running" | "paused" | "crashed";
 export type ProjectStatus = "unknown" | "creating" | "importing" | "ready" | "invalid" | "missing_dependencies";

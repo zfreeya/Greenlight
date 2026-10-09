@@ -4,6 +4,7 @@ import {
   MemoryConfig, loadMemoryConfig, saveMemoryConfig,
   recallMemory, commitMemory, chatCompletion, LlmToolCall,
 } from "./memory";
+import { DIRECTOR_TOOL_NAMES, directorTools, loadDirectorCatalog } from "./director";
 
 /* ================= Toast ================= */
 export interface ToastItem { id: number; kind: string; title: string; msg?: string }
@@ -49,10 +50,28 @@ const SYSTEM_PROMPT = [
   "10. 复杂游戏按分层推进：先做一个能玩的最小核心，再逐轮加系统（每轮可试玩）。项目文件用 read_godot_script / write_godot_script / edit_godot_script 读写（相对项目目录），不用 bash cat/sed。运行游戏后用 collect_godot_diagnostics 读取结构化错误（含文件与行号），定位后 edit_godot_script 修复，再 restart_godot_game。一次只改一个系统，改完即验证。",
 ].join("\n");
 
+/* ================= Harness Director 系统提示（导演工作台） ================= */
+const DIRECTOR_SYSTEM = [
+  "【当前任务类型：Harness Director 视频制作工作台】",
+  "你是 director-orchestrator：把创意推进到可交付视频的制片/导演工作台 Agent。你负责判断阶段、调用结构化工具、维护状态，不一次性假装完成全部角色。",
+  "工作流阶段（进度条，不是闸门）：默认按序推进，但允许用户要求乱序（如先出画面再补设定）；生成/剪辑/导出操作不受阶段限制，阶段只反映进展。intake(需求/制片约束→Creative Brief) → story(故事/剧本) → direction(导演定调) → rhythm(节奏) → script_lock → shot_design(Blocking→镜头表) → storyboard(分镜) → keyframes(关键帧) → generation(视频生成+QC) → edit(剪辑时间线) → sound(声音) → review(审片) → export(导出)。",
+  "硬性规则：",
+  "1. 每轮先调用 get_director_project 读取当前阶段与已有数据，再决定下一步；不要重复生成已确认内容。",
+  "2. 所有产出必须通过结构化工具写入项目（analyze_script/create_director_treatment/create_rhythm_plan/create_shot_list/update_project_bible/create_keyframe/...），不要把数据只写在聊天里。",
+  "3. 生成内容用 JSON 结构传给工具：story 用 analyze_script；导演方向用 create_director_treatment（至少两个实质差异方向，禁用『电影感/8K/大师级』空话）；节奏用 create_rhythm_plan；镜头用 create_shot_list（每镜有 narrativePurpose/startState/primaryAction/endState；Blocking 先于摄影机设计；一镜只保留一个主要人物动作+一个摄影机行为+一个环境运动）。",
+  "4. 关键帧 Prompt 与运动 Prompt 分开（create_keyframe 存关键帧；compile_generation_prompt 编译运动 Prompt）；先锁定人物与空间（update_project_bible 建立 character/location/visual bible，逐项 stableId），再生成运动。",
+  "5. 确认闸门：Creative Brief / 剧本锁定 / 导演定调 / 节奏 / 分镜 / 关键帧 / 批量付费生成 / 粗剪 / 最终导出。进入这些阶段前，把方案摘要给用户并用 [OPTIONS] 请求确认；用户确认后调用 confirm_gate 再 set_project_phase 推进。",
+  "6. 付费生成前先 estimate_generation_cost 显示成本；批量生成需明确确认；不因单个镜头失败把整个项目标记失败。",
+  "7. 视频生成必须使用 provider=seedance（火山方舟 Seedance sidecar）：SDK 内嵌于应用、API Key 在 macOS Keychain、由 director-server 提供，判断可用性看 list_providers 里 seedance 的 available 字段，不要在项目目录里 grep 配置或依赖本机 python 环境。provider=ark 已废弃不可用；未知 Provider 或校验失败时如实报告配置问题，绝不用 local-stub 假装生成、不编造 taskId/成片路径。",
+  "8. 项目 ID 恒为当前线程 ID：所有 director 工具调用都会自动绑定到当前项目（UI 与对话看的是同一个项目），不要自行创建或指定其它 projectId；get_director_project 返回的就是当前项目。",
+  "9. 付费提交的确切步骤（缺一不可，否则任务不会真正提交）：① 调 compile_generation_spec（只读，返回 confirmation 面板：费用/通道/模型/缓存）→ ② 把费用展示给用户并等待明确同意 → ③ 用户同意后用 confirm_generation 传 confirmed:true（或 submit_video_generation 传 confirmed:true）真正提交 → ④ 提交成功后任务会出现在 list_generation_queue，轮询直到 Take 状态 ready_for_review，再 place_clip_on_timeline。注意：confirm_gate 是项目阶段闸门，不是付费提交确认，不能替代第③步；不带 confirmed:true 的提交接口只会返回确认面板（pendingConfirmation:true, taskId:null），不代表已提交。相同 Spec 第二次提交命中缓存，不重复计费。批量生成用 generate_selected_shots：先不带 confirmed 调一次拿到每镜缓存/新生成/校验汇总给用户确认，再带 confirmed:true（可加 batchCap 限制本次最多新生成条数，达到上限后剩余镜头本次不提交）真正提交。Seedance 按次计费、本地无法预估单条费用，不要向用户报具体金额，如实说明『以服务端实际扣费为准』。",
+  "7. 中文简洁回复，每完成一个阶段汇报：已写入哪些结构化数据、当前阶段、下一步。",
+].join("\n");
+
 /* ================= 工具定义（对齐 deepseek-harness 关键工具） ================= */
-function buildTools() {
+function buildTools(kind?: string) {
   const str = (description: string) => ({ type: "string", description });
-  return [
+  const base = [
     { type: "function", function: { name: "bash", description: "在工作目录运行 shell 命令并返回 stdout/stderr。用于运行代码、测试、构建、浏览代码仓库（ls/cat/find/git）等。", parameters: { type: "object", properties: { command: str("要执行的 bash 命令，如 ls -la 或 node test.js") }, required: ["command"] } } },
     { type: "function", function: { name: "read", description: "读取工作目录内的文本文件，返回带行号的内容。", parameters: { type: "object", properties: { path: str("相对工作目录的文件路径"), offset: { type: "integer", description: "起始行号，默认 1" }, limit: { type: "integer", description: "最多返回行数，默认 2000" } }, required: ["path"] } } },
     { type: "function", function: { name: "write", description: "创建或整体覆盖工作目录内的文件。", parameters: { type: "object", properties: { path: str("相对工作目录的文件路径"), content: str("完整文件内容") }, required: ["path", "content"] } } },
@@ -87,6 +106,8 @@ function buildTools() {
     { type: "function", function: { name: "write_godot_script", description: "创建或整体覆盖 Godot 项目内文件。", parameters: { type: "object", properties: { path: str("相对项目目录的路径"), content: str("完整内容") }, required: ["path", "content"] } } },
     { type: "function", function: { name: "edit_godot_script", description: "对 Godot 项目内文件做精准文本替换。", parameters: { type: "object", properties: { path: str("相对项目目录的路径"), old_string: str("要被替换的原文"), new_string: str("替换后的文本"), replace_all: { type: "boolean" } }, required: ["path", "old_string", "new_string"] } } },
   ];
+  if (kind === "director") return [...base, ...(directorTools() as { type: string; function: unknown }[])];
+  return base;
 }
 
 /* ================= 真实 LLM + 真实工具引擎 hook ================= */
@@ -96,6 +117,7 @@ const LS_MODEL = "harness.model.v1";
 const LS_WS_PREVIEWS = "harness.wsPreviews.v1";
 const LS_EXEC_MODE = "harness.execMode.v1";
 const LS_GODOT = "harness.godot.config";
+const LS_DIRECTOR = "harness.director.config";
 const LS_REDUCE_MOTION = "harness.reduceMotion.v1";
 const LS_MAX_THREADS = 50;
 const LS_MAX_MSGS_PER_THREAD = 300;
@@ -112,7 +134,7 @@ function normalizeThread(t: Partial<Thread>): Thread {
     ...base, ...t,
     id: typeof t.id === "string" ? t.id : base.id,
     title: typeof t.title === "string" && t.title ? t.title : "新任务",
-    kind: t.kind === "godot" || t.kind === "import_godot" || t.kind === "web" ? t.kind : "general",
+    kind: t.kind === "godot" || t.kind === "import_godot" || t.kind === "web" || t.kind === "director" ? t.kind : "general",
     status: normalizeTaskStatus(t.status),
     agent: normalizeAgentStatus(t.agent),
     thinking: false,
@@ -215,6 +237,11 @@ export function useHarness() {
     return { url: "http://127.0.0.1:8455" };
   });
   const setGodotCfg = (c: { url: string }) => { try { localStorage.setItem(LS_GODOT, JSON.stringify(c)); } catch { /* ignore */ } setGodotCfgState(c); };
+  const [directorCfg, setDirectorCfgState] = useState<{ url: string }>(() => {
+    try { const r = localStorage.getItem(LS_DIRECTOR); if (r) return { url: JSON.parse(r).url || "http://127.0.0.1:8456" }; } catch { /* ignore */ }
+    return { url: "http://127.0.0.1:8456" };
+  });
+  const setDirectorCfg = (c: { url: string }) => { try { localStorage.setItem(LS_DIRECTOR, JSON.stringify(c)); } catch { /* ignore */ } setDirectorCfgState(c); };
   const [mode, setModeState] = useState<ExecMode>(() => {
     try {
       const m = localStorage.getItem(LS_EXEC_MODE);
@@ -238,6 +265,9 @@ export function useHarness() {
       if (d && d.workspace) setToolsCfgState((c) => (c.workspace === d.workspace ? c : { ...c, workspace: d.workspace }));
     }).catch(() => undefined);
   }, [toolsCfg.url]);
+
+  /* Director 目录预加载（工具 Schema + Skills + 常量） */
+  useEffect(() => { loadDirectorCatalog(directorCfg.url); }, [directorCfg.url]);
 
   /* 会话持久化：每次变化落 localStorage（重开 App 不丢对话），带容量上限防止配额打满 */
   useEffect(() => {
@@ -296,6 +326,9 @@ export function useHarness() {
     let sys = SYSTEM_PROMPT;
     if (t.kind === "godot" || t.kind === "import_godot") {
       sys += "\n\n【当前任务类型：Godot 游戏】" + (godotCtx || "请先用 detect_godot_runtime 确认引擎状态。");
+    }
+    if (t.kind === "director") {
+      sys += "\n\n" + DIRECTOR_SYSTEM;
     }
     if (recallCtx) {
       out.push({ role: "system", content: sys + "\n\n以下是记忆系统召回的用户画像与长期偏好，请在澄清与计划中主动遵守：\n" + recallCtx });
@@ -385,6 +418,28 @@ export function useHarness() {
         return { text, failed };
       } catch (e) {
         const text = JSON.stringify({ ok: false, code: "service_unavailable", error: "Godot 服务不可达：" + String(e) });
+        toolEvents.current.push({ name, args, result: text, status: "error" });
+        (window as unknown as Record<string, unknown>).__toolEvents = toolEvents.current.slice();
+        return { text, failed: true };
+      }
+    }
+    if (DIRECTOR_TOOL_NAMES.includes(name)) {
+      try {
+        // 项目绑定：导演项目 = 当前线程（UI 与 Agent 共用同一项目），忽略 Agent 自拟 projectId，避免进度不同步
+        const res = await fetch(directorCfg.url + "/" + name, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...args, projectId: threadId }),
+          signal: AbortSignal.timeout(180000),
+        });
+        const data = await res.json();
+        const text = JSON.stringify(data);
+        const failed = Boolean(data && typeof data === "object" && (data.ok === false || "error" in data));
+        toolEvents.current.push({ name, args, result: text, status: failed ? "error" : "done" });
+        (window as unknown as Record<string, unknown>).__toolEvents = toolEvents.current.slice();
+        return { text, failed };
+      } catch (e) {
+        const text = JSON.stringify({ ok: false, code: "service_unavailable", error: "Director 服务不可达：" + String(e) });
         toolEvents.current.push({ name, args, result: text, status: "error" });
         (window as unknown as Record<string, unknown>).__toolEvents = toolEvents.current.slice();
         return { text, failed: true };
@@ -500,7 +555,7 @@ export function useHarness() {
     }
 
     const execMode = modeRef.current;
-    const execTools = execMode === "plan-only" ? [] : buildTools();
+    const execTools = execMode === "plan-only" ? [] : buildTools(snapshot.kind);
     if (execMode === "plan-only") {
       snapshot.msgs.unshift({ id: -1, role: "agent", kind: "text", text: "（当前模式：仅制定计划，不执行工具。请只输出计划/方案，明确步骤与预期结果。）" });
     }
@@ -557,10 +612,16 @@ export function useHarness() {
       return;
     }
     if (finalError) {
+      // 按真实失败类型给提示，不把一切归因于 MemoryProxy 配置（否则误导排查方向）
+      const hint = /^HTTP 5\d\d/.test(finalError)
+        ? "上游模型服务暂时返回 5xx（多为瞬时故障，可稍后重试）；MemoryProxy 地址与密钥本身正常。"
+        : /fetch failed|Failed to fetch|Load failed|Timeout|ECONNREFUSED|NetworkError/i.test(finalError)
+          ? "MemoryProxy 不可达：检查设置里的地址与密钥，或确认服务已启动。"
+          : "检查设置里的 MemoryProxy 地址与密钥，或直接描述你的新需求。";
       patchThread(t.id, (tt) => {
         tt.agent = "error";
         tt.status = "failed";
-        tt.msgs.push({ id: Date.now(), role: "agent", kind: "text", text: "执行失败：" + finalError + "。下一步：检查设置里的 MemoryProxy 地址与密钥后重试，或直接描述你的新需求。", time: now() });
+        tt.msgs.push({ id: Date.now(), role: "agent", kind: "text", text: "执行失败：" + finalError + "。" + hint, time: now() });
       });
       return;
     }
@@ -584,7 +645,7 @@ export function useHarness() {
     const t = threadsRef.current.find((x) => x.id === currentRef.current);
     if (!t) return;
     const m = t.msgs[mi];
-    if (m.picked !== undefined || t.thinking) return;
+    if (!m || m.picked !== undefined || t.thinking) return; // 越界索引/非法消息直接忽略，不崩溃
     patchThread(t.id, (tt) => { tt.msgs[mi] = { ...m, picked: oi }; });
     sendMessage(m.opts![oi]);
   };
@@ -683,7 +744,7 @@ export function useHarness() {
     if (t && !t.msgs.some((m) => m.kind === "recall") && t.msgs.length <= 1) setPreviewOpen(false);
   };
 
-  const newChat = (kind?: "general" | "web" | "godot" | "import_godot") => {
+  const newChat = (kind?: "general" | "web" | "godot" | "import_godot" | "director") => {
     const t = firstThread();
     if (kind) t.kind = kind;
     setThreads((ts) => [t, ...ts]);
@@ -720,6 +781,7 @@ export function useHarness() {
     memCfg, setMemCfg,
     toolsCfg, setToolsCfg,
     godotCfg, setGodotCfg,
+    directorCfg, setDirectorCfg,
     wsPreviews, closeWsPreview,
     toasts, push,
     PREVIEW_PAGES,

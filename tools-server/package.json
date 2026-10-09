@@ -1,0 +1,19 @@
+{
+  "name": "harness-tools-server",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Harness Desktop capability backend: tools, Agent Skills (SKILL.md), MCP host, capabilities and permissions.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "yaml": "^2.9.0",
+    "yauzl": "^3.4.0"
+  }
+}

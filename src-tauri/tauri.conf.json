@@ -30,13 +30,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "resources": [
       "resources/node/bin/node",
       "resources/node/lib/*",
       "resources/memory-core/**/*",
       "resources/memory-proxy/**/*",
       "resources/tools-server/**/*",
+      "resources/python-site-packages/**/*",
       "resources/config/*"
     ],
     "icon": [

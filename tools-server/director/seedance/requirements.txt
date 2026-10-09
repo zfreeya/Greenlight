@@ -1,0 +1,5 @@
+# Seedance sidecar worker 依赖
+# 安装：python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+volcengine-python-sdk[ark]>=1.0.0
+# 可选：TOS 上传（临时凭证上传参考素材时）
+# tos

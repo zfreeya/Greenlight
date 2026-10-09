@@ -1,0 +1,55 @@
+{
+  "name": "harness-director",
+  "version": "0.1.0",
+  "description": "Harness Director 核心模块：AI 导演工作台（项目/场景/镜头/Take/生成引擎/缓存/付费闸门/FFmpeg 后期/连续性检查/反向工作流/订单记账）。可作为独立 Node 服务或嵌入桌面应用。",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./server": "./server.mjs",
+    "./context": "./server-context.mjs",
+    "./routes": "./routes/index.mjs",
+    "./types": "./types.mjs",
+    "./store": "./store.mjs",
+    "./generation": "./generation.mjs",
+    "./ffmpeg": "./ffmpeg.mjs",
+    "./prompt-compiler": "./prompt-compiler.mjs",
+    "./qc": "./qc.mjs",
+    "./timeline": "./timeline.mjs",
+    "./render": "./render.mjs",
+    "./tools": "./tools.mjs",
+    "./providers": "./providers.mjs",
+    "./skills": "./skills.mjs",
+    "./asset-upload": "./asset-upload.mjs",
+    "./keychain": "./keychain.mjs",
+    "./third-party": "./third-party.mjs",
+    "./seedance": "./seedance/index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "server.mjs",
+    "server-context.mjs",
+    "types.mjs",
+    "store.mjs",
+    "generation.mjs",
+    "ffmpeg.mjs",
+    "prompt-compiler.mjs",
+    "qc.mjs",
+    "timeline.mjs",
+    "render.mjs",
+    "tools.mjs",
+    "providers.mjs",
+    "skills.mjs",
+    "asset-upload.mjs",
+    "keychain.mjs",
+    "third-party.mjs",
+    "routes/",
+    "seedance/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  }
+}

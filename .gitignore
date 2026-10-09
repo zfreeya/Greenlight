@@ -34,3 +34,23 @@ src-tauri/resources/tools-server
 test-results/
 playwright-report/
 workspace/
+
+# 凭证与敏感文件（绝不进 Git）
+.env
+.env.*.local
+*.key
+*.pem
+credentials*.json
+
+# Python sidecar 虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+
+# Director 生成引擎运行时数据库（缓存/任务生命周期，本地产物）
+**/director/generation.db
+**/director/generation.db-*
+**/director/uploads.db
+**/director/uploads.db-*
+**/director/exports/
+**/director/assets/seedance/

@@ -16,6 +16,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createApp } from "./lib/app.js";
+import { skillsRoutes } from "./lib/skills-api.js";
+
+/* Harness 能力后端（Skill / MCP / Capability / Permission）共享上下文 */
+const app = createApp();
 
 function argValue(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -207,6 +212,7 @@ const routes = {
   "/glob": (body) => glob(String(body.pattern ?? "**/*"), String(body.path ?? ".")),
   "/grep": (body) => grep(String(body.pattern ?? ""), String(body.path ?? "."), String(body.include ?? "")),
   "/fetch": (body) => fetchUrl(String(body.url ?? "")),
+  ...skillsRoutes(app),
 };
 
 http.createServer(async (req, res) => {
@@ -224,11 +230,22 @@ http.createServer(async (req, res) => {
       let abs = resolveInWorkspace(rel);
       if (fs.statSync(abs).isDirectory()) abs = path.join(abs, "index.html");
       const buf = fs.readFileSync(abs);
-      res.writeHead(200, {
-        "Content-Type": MIME[path.extname(abs).toLowerCase()] ?? "application/octet-stream",
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store",
-      });
+      // HTTP Range（WebKit 视频/音频播放必需）
+      const total = buf.length;
+      const range = req.headers.range;
+      const m = range && /^bytes=(\d*)-(\d*)$/.exec(range);
+      const base = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
+      const mime = MIME[path.extname(abs).toLowerCase()] ?? "application/octet-stream";
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? parseInt(m[1], 10) : null;
+        let end = m[2] ? parseInt(m[2], 10) : null;
+        if (start === null) { const n = end ?? 0; start = Math.max(0, total - n); end = total - 1; }
+        else { if (end === null || end >= total) end = total - 1; }
+        if (start > end || start >= total) { res.writeHead(416, { ...base, "Content-Range": "bytes */" + total }); return res.end(); }
+        res.writeHead(206, { ...base, "Content-Type": mime, "Content-Length": end - start + 1, "Content-Range": "bytes " + start + "-" + end + "/" + total, "Accept-Ranges": "bytes" });
+        return res.end(buf.subarray(start, end + 1));
+      }
+      res.writeHead(200, { ...base, "Content-Type": mime, "Content-Length": total, "Accept-Ranges": "bytes" });
       res.end(buf);
     } catch {
       json(res, 404, { error: "预览文件不存在：" + rel });
