@@ -4,6 +4,10 @@ dist
 src-tauri/target
 src-tauri/gen
 
+# npm 本地缓存（曾误入仓库，27MB / 390 个文件）
+.npm-cache/
+**/.npm-cache/
+
 # 打包资源（体积巨大，由 scripts/prepare-resources.sh 从本机服务重新生成）
 resources/node
 resources/memory-core
@@ -29,6 +33,8 @@ src-tauri/resources/node
 src-tauri/resources/memory-core
 src-tauri/resources/memory-proxy
 src-tauri/resources/tools-server
+src-tauri/resources/python-site-packages
+src-tauri/resources/python-venv
 
 # Playwright 测试产物
 test-results/
